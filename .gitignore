@@ -1,0 +1,10 @@
+node_modules
+dist
+.vercel
+.env.local
+.env.*.local
+*.log
+.DS_Store
+# Local-only preview data written by scripts/sync-nam-supply.mjs --snapshot. Real figures: never commit.
+public/dev-snapshot.json
+data/

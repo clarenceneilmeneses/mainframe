@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/*
+ * Mainframe, on the Malaya OBS design system, recoloured for NAM.
+ *
+ * White grounds, a cool mist for panels, neutral ink, and one blue (the NAM
+ * seal, #1d5ba4) for everything that is the brand: buttons, active states,
+ * charts. The sidebar is the navy of the same hue. Status colours — green on
+ * target, amber watch, red off target — are meaning, never brand.
+ *
+ * Faces: Outfit for headings and numbers, Karla for body text, as in Malaya's admin.
+ */
+@theme {
+  --font-sans: "Karla", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+
+  /* Grounds and hairlines. mist-50 is the page, mist-100 the muted panel. */
+  --color-mist-50: oklch(0.985 0.002 250);
+  --color-mist-100: oklch(0.955 0.006 250);
+  --color-mist-200: oklch(0.895 0.008 250);
+  --color-mist-300: oklch(0.8 0.01 250);
+
+  --color-ink: oklch(0.22 0.01 255);
+  --color-ink-soft: oklch(0.36 0.01 255);
+  --color-ink-muted: oklch(0.48 0.01 255);
+
+  /* The NAM blue. brand-700 is the primary. */
+  --color-brand-50: oklch(0.965 0.015 255);
+  --color-brand-100: oklch(0.92 0.035 255);
+  --color-brand-200: oklch(0.85 0.06 255);
+  --color-brand-300: oklch(0.74 0.09 255);
+  --color-brand-500: oklch(0.58 0.14 255);
+  --color-brand-600: oklch(0.52 0.14 255);
+  --color-brand-700: oklch(0.46 0.13 255);
+  --color-brand-800: oklch(0.39 0.11 255);
+
+  /* Kept for the shared kit (used for warnings). */
+  --color-terra-50: oklch(0.96 0.025 60);
+  --color-terra-500: oklch(0.5326 0.1348 49.8);
+  --color-terra-600: oklch(0.49 0.13 48);
+
+  /* Sidebar. */
+  --color-navy: oklch(0.235 0.045 258);
+  --color-navy-soft: oklch(0.31 0.055 258);
+  --color-ice: oklch(0.94 0.015 250);
+
+  /* Score status. */
+  --color-good: oklch(0.55 0.13 155);
+  --color-good-50: oklch(0.965 0.03 155);
+  --color-watch: oklch(0.62 0.14 70);
+  --color-watch-50: oklch(0.97 0.04 85);
+  --color-off: oklch(0.55 0.19 27);
+  --color-off-50: oklch(0.965 0.025 27);
+
+  --shadow-level-1: 0 1px 2px oklch(0.3 0.05 258 / 5%);
+  --shadow-level-2: 0 1px 2px oklch(0.3 0.05 258 / 5%), 0 4px 12px oklch(0.3 0.05 258 / 6%);
+  --shadow-level-3: 0 2px 4px oklch(0.3 0.05 258 / 6%), 0 10px 24px oklch(0.3 0.05 258 / 9%);
+  --shadow-level-4: 0 4px 8px oklch(0.3 0.05 258 / 8%), 0 24px 48px oklch(0.3 0.05 258 / 14%);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    background: #fff;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: 0.005em;
+  }
+}
+
+@layer components {
+  /* Small tracked label that sits over a heading or a number. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--color-ink-muted);
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Unlayered on purpose: the hover shadow has to beat the shadow utility on the same element. */
+.lift {
+  transition:
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-level-3);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.8 0.01 250) transparent;
+}
+
+/* Hatched fill for a category that has no result yet. */
+.hatch {
+  background-image: repeating-linear-gradient(135deg, oklch(0.22 0.01 255 / 0.1) 0 2px, transparent 2px 7px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lift,
+  .lift:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
