@@ -72,6 +72,8 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
   const worst = [...scoredCats].sort((a, b) => (a.attainment ?? 0) - (b.attainment ?? 0))[0];
   const synced = company.data_source ? lastSync(data, company.id) : null;
   const drill = useDrill();
+  const { setRange } = useRange();
+  const pickMonth = (p: string) => setRange({ from: p, to: p });
 
   // Sales against the monthly target, where the business reports sales.
   const sales = useMemo(() => {
@@ -80,6 +82,7 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
     const pts = trendMonths(range).map((p) => {
       const row = data.actuals.find((a) => a.company_id === company.id && a.measure_code === "sales_vs_target" && a.period === p);
       return {
+        period: p,
         label: format(parseISO(p), "MMM"),
         value: row ? Number(row.actual) : null,
         target: row?.target ?? cm?.target ?? def?.default_target ?? null,
@@ -91,13 +94,20 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Card className="flex items-center gap-4 p-5">
-          <ScoreRing score={s.score} status={s.status} size={88} stroke={8} />
-          <div className="min-w-0">
-            <p className="eyebrow">Weighted score</p>
-            <StatusBadge status={s.status} className="mt-2" />
-          </div>
-        </Card>
+        <button
+          type="button"
+          onClick={() => drill.open(company.slug, "score")}
+          className="block h-full w-full cursor-pointer rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700"
+        >
+          <Card className="lift flex h-full items-center gap-4 p-5">
+            <ScoreRing score={s.score} status={s.status} size={88} stroke={8} />
+            <div className="min-w-0">
+              <p className="eyebrow">Weighted score</p>
+              <StatusBadge status={s.status} className="mt-2" />
+              <p className="mt-1.5 text-xs text-brand-700">Where it comes from</p>
+            </div>
+          </Card>
+        </button>
         <StatTile
           label="Scorecard reported"
           value={`${Math.round(s.coverage)}%`}
@@ -133,9 +143,10 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[2fr_3fr]">
         <Card>
-          <CardHeader title="Weight vs earned" description="Each bar is as long as the category's weight; the fill is what it earned." />
+          <CardHeader title="Weight vs earned" description="Each bar is as long as the category's weight; the fill is what it earned. Click one to open it." />
           <div className="px-5 py-4">
             <WeightVsEarned
+              onPick={(code) => drill.open(company.slug, code)}
               rows={s.categories.map((c) => ({
                 code: c.def.code,
                 name: c.def.name,
@@ -148,9 +159,9 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
           </div>
         </Card>
         <Card>
-          <CardHeader title="Score by month" description="The dashed line is 95, on target." />
+          <CardHeader title="Score by month" description="The dashed line is 95, on target. Click a month to look at just that month." />
           <div className="px-3 pt-4 pb-3">
-            <ScoreTrend data={trend} />
+            <ScoreTrend data={trend} onPick={pickMonth} />
           </div>
         </Card>
       </div>
@@ -158,9 +169,9 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
       <div className={cn("grid grid-cols-1 gap-6", !sales.any && "hidden")}>
         {sales.any && (
           <Card>
-            <CardHeader title="Sales vs monthly target" description="Booked sales per month. The dashed line is the target." />
+            <CardHeader title="Sales vs monthly target" description="Booked sales per month. The dashed line is the target. Click a month to look at just that month." />
             <div className="px-3 pt-4 pb-3">
-              <AmountVsTarget data={sales.pts} target={sales.target} name="Sales" />
+              <AmountVsTarget data={sales.pts} target={sales.target} name="Sales" onPick={pickMonth} />
             </div>
           </Card>
         )}
@@ -280,7 +291,7 @@ function ScorecardTable({ s, onOpen }: { s: CompanyScore; onOpen: (code: string)
               <td className="px-3 py-3 text-right font-semibold tabular-nums">100%</td>
               <td className="px-3 py-3 text-[13px] text-ink-muted" colSpan={2}>
                 {reportedWeight > 0
-                  ? `Earned ${points.toFixed(1)} of 100 weight points. ${reportedWeight < 100 ? `Only ${reportedWeight} of the 100 have a figure, so the score is ${points.toFixed(1)} ÷ ${reportedWeight} × 100.` : ""}`
+                  ? `Earned ${points.toFixed(1)} of 100 weight points. ${reportedWeight < 100 ? `Only ${reportedWeight} of the 100 have a figure, so the score is ${points.toFixed(2)} ÷ ${reportedWeight} × 100.` : ""}`
                   : "No results this month"}
               </td>
               <td className="px-5 py-3 text-right">

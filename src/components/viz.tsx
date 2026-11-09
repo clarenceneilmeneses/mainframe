@@ -90,7 +90,13 @@ function TipBox({ title, rows }: { title: string; rows: [string, string][] }) {
 }
 
 /** Score by month: one bar per month, the 95 line marked. Months with no result are left empty. */
-export function ScoreTrend({ data }: { data: { label: string; score: number | null; coverage: number }[] }) {
+export function ScoreTrend({
+  data,
+  onPick,
+}: {
+  data: { period?: string; label: string; score: number | null; coverage: number }[];
+  onPick?: (period: string) => void;
+}) {
   return (
     <div className="h-56">
       <ResponsiveContainer width="100%" height="100%">
@@ -119,7 +125,17 @@ export function ScoreTrend({ data }: { data: { label: string; score: number | nu
               );
             }}
           />
-          <Bar dataKey="score" fill={BLUE} radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
+          <Bar
+            dataKey="score"
+            fill={BLUE}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={36}
+            isAnimationActive={false}
+            cursor={onPick ? "pointer" : undefined}
+            onClick={(d: { payload?: { period?: string } }) => {
+              if (onPick && d?.payload?.period) onPick(d.payload.period);
+            }}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -131,10 +147,12 @@ export function AmountVsTarget({
   data,
   target,
   name,
+  onPick,
 }: {
-  data: { label: string; value: number | null; target: number | null }[];
+  data: { period?: string; label: string; value: number | null; target: number | null }[];
   target: number | null;
   name: string;
+  onPick?: (period: string) => void;
 }) {
   return (
     <div className="h-56">
@@ -164,7 +182,17 @@ export function AmountVsTarget({
               return <TipBox title={String(label)} rows={rows} />;
             }}
           />
-          <Bar dataKey="value" fill={BLUE} radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
+          <Bar
+            dataKey="value"
+            fill={BLUE}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={36}
+            isAnimationActive={false}
+            cursor={onPick ? "pointer" : undefined}
+            onClick={(d: { payload?: { period?: string } }) => {
+              if (onPick && d?.payload?.period) onPick(d.payload.period);
+            }}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -201,8 +229,10 @@ export function MeasureTrend({
   unit,
   band,
   direction,
+  onPick,
 }: {
-  data: { label: string; value: number | null; target: number | null }[];
+  data: { period?: string; label: string; value: number | null; target: number | null }[];
+  onPick?: (period: string) => void;
   unit: Unit;
   band?: number | null;
   direction: "higher" | "lower" | "band";
@@ -238,7 +268,17 @@ export function MeasureTrend({
               return <TipBox title={String(label)} rows={rows} />;
             }}
           />
-          <Bar dataKey="value" fill={BLUE} radius={[4, 4, 0, 0]} maxBarSize={26} isAnimationActive={false} />
+          <Bar
+            dataKey="value"
+            fill={BLUE}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={26}
+            isAnimationActive={false}
+            cursor={onPick ? "pointer" : undefined}
+            onClick={(d: { payload?: { period?: string } }) => {
+              if (onPick && d?.payload?.period) onPick(d.payload.period);
+            }}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -277,8 +317,10 @@ export function BreakdownBars({ rows, unit }: { rows: { label: string; value: nu
  */
 export function WeightVsEarned({
   rows,
+  onPick,
 }: {
   rows: { code: string; name: string; weight: number; earned: number | null; status: Status; applicable: boolean }[];
+  onPick?: (code: string) => void;
 }) {
   const maxW = Math.max(...rows.map((r) => r.weight), 1);
   const earned = rows.reduce((a, r) => a + (r.earned ?? 0), 0);
@@ -287,7 +329,14 @@ export function WeightVsEarned({
     <div>
       <ul className="space-y-3">
         {rows.map((r) => (
-          <li key={r.code} className={cn(!r.applicable && "opacity-40")}>
+          <li
+            key={r.code}
+            className={cn(
+              !r.applicable && "opacity-40",
+              onPick && r.applicable && "-mx-2 cursor-pointer rounded-lg px-2 py-1 transition-colors hover:bg-mist-50",
+            )}
+            onClick={onPick && r.applicable ? () => onPick(r.code) : undefined}
+          >
             <div className="mb-1 flex items-baseline justify-between gap-3 text-[13px]">
               <span className="min-w-0 truncate text-ink-soft">{r.name}</span>
               <span className="shrink-0 tabular-nums">

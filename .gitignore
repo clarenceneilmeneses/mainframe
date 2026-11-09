@@ -8,3 +8,5 @@ dist
 # Local-only preview data written by scripts/sync-nam-supply.mjs --snapshot. Real figures: never commit.
 public/dev-snapshot.json
 data/
+
+.vercel

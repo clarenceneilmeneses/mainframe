@@ -1,12 +1,12 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight, ClipboardPen, RefreshCw } from "lucide-react";
-import { companyScore, DEV_SNAPSHOT, measureSeries, useBoard, type BoardData, type Range } from "../lib/board";
+import { companyScore, DEV_SNAPSHOT, measureSeries, previousRange, useBoard, type BoardData, type Range } from "../lib/board";
 import { statusOf, type MeasureResult } from "../lib/scoring";
 import { money, unitValue } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { Sheet, StatusBadge } from "./ui";
 import { rangeLabel, rangeNoun, useRange } from "./board-bits";
-import { AttainmentBar, BreakdownBars, MeasureTrend } from "./viz";
+import { AttainmentBar, BreakdownBars, MeasureTrend, ScoreRing, WeightVsEarned } from "./viz";
 
 /**
  * The drill-down: click any category anywhere and this panel opens with what
@@ -42,23 +42,28 @@ export function Drilldown() {
   const { range } = useRange();
   const company = data?.companies.find((c) => c.slug === drill.slug);
   const cat = data?.categories.find((c) => c.code === drill.category);
-  const open = Boolean(data && company && cat);
+  // "~score" opens the business's score itself: where its points came from.
+  const scoreView = drill.category === "score";
+  const open = Boolean(data && company && (cat || scoreView));
 
   return (
     <Sheet
       open={open}
       onClose={drill.close}
       title={
-        company && cat ? (
+        company && (cat || scoreView) ? (
           <div className="min-w-0">
             <p className="eyebrow truncate">
               {company.name} · {rangeLabel(range)}
             </p>
-            <p className="truncate font-display text-lg font-medium text-ink">{cat.name}</p>
+            <p className="truncate font-display text-lg font-medium text-ink">{scoreView ? "Where the score comes from" : cat!.name}</p>
           </div>
         ) : null
       }
     >
+      {open && data && company && scoreView && (
+        <ScoreBody data={data} companyId={company.id} slug={company.slug} range={range} onOpen={(c) => drill.open(company.slug, c)} />
+      )}
       {open && data && company && cat && <Body data={data} companyId={company.id} slug={company.slug} categoryCode={cat.code} range={range} />}
     </Sheet>
   );
@@ -144,6 +149,8 @@ function MeasureBlock({
   const breakdowns = ((mr.row?.detail as { breakdowns?: { title: string; unit: "php" | "pct"; rows: { label: string; value: number }[] }[] } | null)
     ?.breakdowns ?? []).filter((b) => b.rows.length);
   const how = howWorkedOut(mr);
+  const { setRange } = useRange();
+  const pickMonth = (p: string) => setRange({ from: p, to: p });
   const target =
     mr.def.direction === "band"
       ? `within ±${unitValue(mr.def.band, mr.def.unit)}`
@@ -198,7 +205,8 @@ function MeasureBlock({
       {hasHistory && (
         <div className="px-2 pt-3">
           <p className="px-2 pb-1 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">Month by month</p>
-          <MeasureTrend data={series} unit={mr.def.unit} band={mr.def.band} direction={mr.def.direction} />
+          <MeasureTrend data={series} unit={mr.def.unit} band={mr.def.band} direction={mr.def.direction} onPick={pickMonth} />
+          <p className="px-2 pb-1 text-[11px] text-ink-muted">Click a month to look at just that month.</p>
         </div>
       )}
 
@@ -210,5 +218,92 @@ function MeasureBlock({
       ))}
       {!breakdowns.length && <div className="h-4" />}
     </section>
+  );
+}
+
+/** A business's score taken apart: each category's weight against what it earned, and what changed. */
+function ScoreBody({
+  data,
+  companyId,
+  slug,
+  range,
+  onOpen,
+}: {
+  data: BoardData;
+  companyId: string;
+  slug: string;
+  range: Range;
+  onOpen: (category: string) => void;
+}) {
+  const s = companyScore(data, companyId, range);
+  const before = companyScore(data, companyId, previousRange(range));
+  const earned = s.categories.reduce((a, c) => a + (c.points ?? 0), 0);
+  const reportedWeight = s.categories.filter((c) => c.points != null).reduce((a, c) => a + Number(c.def.weight), 0);
+  const moves = s.categories
+    .map((c) => {
+      const b = before.categories.find((x) => x.def.code === c.def.code);
+      return { c, diff: c.points != null && b?.points != null ? c.points - b.points : null };
+    })
+    .filter((x): x is { c: typeof x.c; diff: number } => x.diff != null && Math.abs(x.diff) >= 0.05)
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+
+  return (
+    <div className="space-y-4 p-4 sm:p-5">
+      <div className="flex items-center gap-4 rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1">
+        <ScoreRing score={s.score} status={s.status} size={88} stroke={8} />
+        <div className="min-w-0 text-sm text-ink-muted">
+          <StatusBadge status={s.status} />
+          <p className="mt-2 leading-snug">
+            {s.score == null
+              ? "Nothing reported for this period."
+              : `Earned ${earned.toFixed(2)} of the ${reportedWeight} weight points that have a figure, so the score is ${earned.toFixed(2)} ÷ ${reportedWeight} × 100 = ${s.score.toFixed(1)}.`}
+          </p>
+        </div>
+      </div>
+
+      <section className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1">
+        <p className="mb-3 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">Weight vs earned · click one to open it</p>
+        <WeightVsEarned
+          onPick={onOpen}
+          rows={s.categories.map((c) => ({
+            code: c.def.code,
+            name: c.def.name,
+            weight: Number(c.def.weight),
+            earned: c.points,
+            status: statusOf(c.attainment == null ? null : c.attainment * 100),
+            applicable: c.applicable,
+          }))}
+        />
+      </section>
+
+      {moves.length > 0 && (
+        <section className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1">
+          <p className="mb-2 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">What moved since the period before</p>
+          <ul className="divide-y divide-mist-100">
+            {moves.map(({ c, diff }) => (
+              <li key={c.def.code}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(c.def.code)}
+                  className="flex w-full cursor-pointer items-center justify-between gap-3 py-2 text-left text-sm hover:text-brand-700"
+                >
+                  <span className="min-w-0 truncate text-ink-soft">{c.def.name}</span>
+                  <span className={diff > 0 ? "shrink-0 text-good tabular-nums" : "shrink-0 text-off tabular-nums"}>
+                    {diff > 0 ? "▲" : "▼"} {Math.abs(diff).toFixed(1)} pts
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <Link
+        to={`/c/${slug}?from=${range.from.slice(0, 7)}&to=${range.to.slice(0, 7)}`}
+        className="flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-brand-700 hover:underline"
+      >
+        Open the full scorecard <ArrowRight className="size-4" />
+      </Link>
+    </div>
   );
 }

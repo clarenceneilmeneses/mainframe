@@ -101,19 +101,23 @@ function Body({ data, range }: { data: BoardData; range: Range }) {
   const reported = counts.on + counts.watch + counts.off;
   const total = reported + counts.missing;
   const [view, setView] = useState<View>("pct");
+  const [list, setList] = useState<ListKind | null>(null);
   const vs = rangeNoun(range).startsWith("these") ? "the period before" : "last month";
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <Card className="col-span-2 flex items-center gap-4 p-5 lg:col-span-1">
-          <ScoreRing score={group} status={statusOf(group)} size={84} stroke={8} />
-          <div className="min-w-0">
-            <p className="eyebrow">Group score</p>
-            <Delta now={group} before={groupPrev} vs={vs} className="mt-1.5" />
-            <p className="mt-1 text-xs text-ink-muted">Average of the businesses that reported</p>
-          </div>
-        </Card>
+        <button type="button" onClick={() => setList("group")} className={cn(tileBtn, "col-span-2 lg:col-span-1")}>
+          <Card className="lift flex h-full items-center gap-4 p-5">
+            <ScoreRing score={group} status={statusOf(group)} size={84} stroke={8} />
+            <div className="min-w-0">
+              <p className="eyebrow">Group score</p>
+              <Delta now={group} before={groupPrev} vs={vs} className="mt-1.5" />
+              <p className="mt-1 text-xs text-ink-muted">Average of the businesses that reported</p>
+            </div>
+          </Card>
+        </button>
+        <button type="button" onClick={() => setList("on")} className={tileBtn}>
         <StatTile
           label="KPIs on target"
           value={
@@ -125,6 +129,8 @@ function Body({ data, range }: { data: BoardData; range: Range }) {
           sub="of the measures reported"
           icon={<CheckCircle2 />}
         />
+        </button>
+        <button type="button" onClick={() => setList("below")} className={tileBtn}>
         <StatTile
           label="Below target"
           value={counts.off + counts.watch}
@@ -132,6 +138,8 @@ function Body({ data, range }: { data: BoardData; range: Range }) {
           icon={<AlertTriangle />}
           tone={counts.off > 0 ? "warn" : "default"}
         />
+        </button>
+        <button type="button" onClick={() => setList("missing")} className={cn(tileBtn, "col-span-2 lg:col-span-1")}>
         <StatTile
           label="Not reported"
           value={
@@ -142,9 +150,10 @@ function Body({ data, range }: { data: BoardData; range: Range }) {
           }
           sub="measures with no figure yet"
           icon={<CircleDashed />}
-          className="col-span-2 lg:col-span-1"
         />
+        </button>
       </div>
+      <ListModal kind={list} onClose={() => setList(null)} rows={scores} range={range} vs={vs} />
 
       <Card className="overflow-hidden">
         <CardHeader
@@ -206,6 +215,126 @@ function Delta({ now, before, vs, className }: { now: number | null; before: num
 
 type Row = { company: Company; s: ReturnType<typeof companyScore>; prev: ReturnType<typeof companyScore> };
 
+const tileBtn =
+  "block h-full w-full cursor-pointer rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700";
+
+type ListKind = "group" | "on" | "below" | "missing";
+
+const LIST_TITLE: Record<ListKind, { title: string; description: string }> = {
+  group: { title: "Group score, by business", description: "The group score is the average of these. Click one to see where its score comes from." },
+  on: { title: "KPIs on target", description: "Measures at 95% of target or better. Click one to drill in." },
+  below: { title: "Below target", description: "Measures under 95% of target, furthest off first. Click one to drill in." },
+  missing: { title: "Not reported", description: "Measures with no figure for this period, by business." },
+};
+
+/** What sits behind each headline tile. */
+function ListModal({ kind, onClose, rows, range, vs }: { kind: ListKind | null; onClose: () => void; rows: Row[]; range: Range; vs: string }) {
+  const drill = useDrill();
+  const go = (slug: string, code: string) => {
+    onClose();
+    drill.open(slug, code);
+  };
+  const measures = rows.flatMap(({ company, s }) =>
+    s.categories.flatMap((c) => c.measures.filter((m) => m.applicable).map((m) => ({ company, cat: c, m }))),
+  );
+  const m = range.to.slice(0, 7);
+  let body: React.ReactNode = null;
+
+  if (kind === "group") {
+    body = (
+      <ul className="divide-y divide-mist-200">
+        {rows.map(({ company, s, prev }) => (
+          <li key={company.id}>
+            <button type="button" onClick={() => go(company.slug, "score")} className="flex w-full cursor-pointer items-center gap-3 py-3 text-left hover:text-brand-700">
+              <span className={cn("size-2 shrink-0 rounded-full", dot[s.status])} aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium text-ink">{company.name}</span>
+                <span className="block text-xs text-ink-muted">{s.score == null ? "Nothing reported — left out of the average" : `${Math.round(s.coverage)}% of the scorecard reported`}</span>
+              </span>
+              <span className="shrink-0 text-right tabular-nums">
+                <span className="block font-display text-xl text-ink">{s.score == null ? "—" : s.score.toFixed(1)}</span>
+                {s.score != null && prev.score != null && (
+                  <span className={cn("text-[11px]", s.score >= prev.score ? "text-good" : "text-off")}>
+                    {s.score >= prev.score ? "▲" : "▼"} {Math.abs(s.score - prev.score).toFixed(1)} vs {vs}
+                  </span>
+                )}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    );
+  } else if (kind === "on" || kind === "below") {
+    const items = measures
+      .filter(({ m: x }) => x.attainment != null && (kind === "on" ? x.attainment >= 0.95 : x.attainment < 0.95))
+      .sort((a, b) => (kind === "on" ? (b.m.attainment ?? 0) - (a.m.attainment ?? 0) : (a.m.attainment ?? 0) - (b.m.attainment ?? 0)));
+    body = items.length ? (
+      <ul className="divide-y divide-mist-200">
+        {items.map(({ company, cat, m: x }) => (
+          <li key={company.id + x.def.code}>
+            <button type="button" onClick={() => go(company.slug, cat.def.code)} className="flex w-full cursor-pointer items-center gap-3 py-3 text-left hover:text-brand-700">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-ink">{x.def.name}</span>
+                <span className="block truncate text-xs text-ink-muted">
+                  {company.name} · {SHORT[cat.def.code] ?? cat.def.name} · {valueVsTarget(x)}
+                </span>
+              </span>
+              <StatusBadge status={statusOf((x.attainment ?? 0) * 100)} label={`${Math.round((x.attainment ?? 0) * 100)}%`} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p className="py-6 text-center text-sm text-ink-muted">{kind === "on" ? "Nothing is on target yet." : "Nothing reported is below target."}</p>
+    );
+  } else if (kind === "missing") {
+    body = (
+      <div className="space-y-4">
+        {rows.map(({ company, s }) => {
+          const gaps = s.categories.flatMap((c) => c.measures.filter((x) => x.applicable && x.attainment == null).map((x) => ({ c, x })));
+          return (
+            <section key={company.id}>
+              <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                <p className="font-medium text-ink">
+                  {company.name} <span className="text-sm font-normal text-ink-muted">· {gaps.length} missing</span>
+                </p>
+                {gaps.length > 0 && (
+                  <Link to={`/entry?c=${company.slug}&m=${m}`} onClick={onClose} className="text-sm font-medium text-brand-700 hover:underline">
+                    Record
+                  </Link>
+                )}
+              </div>
+              {gaps.length ? (
+                <ul className="flex flex-wrap gap-1.5">
+                  {gaps.map(({ c, x }) => (
+                    <li key={x.def.code}>
+                      <button
+                        type="button"
+                        onClick={() => go(company.slug, c.def.code)}
+                        className="cursor-pointer rounded-full bg-mist-100 px-2.5 py-1 text-xs text-ink-soft hover:bg-brand-50 hover:text-brand-700"
+                      >
+                        {x.def.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-ink-muted">Everything is in.</p>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <Modal open={kind != null} onClose={onClose} title={kind ? LIST_TITLE[kind].title : ""} description={kind ? LIST_TITLE[kind].description : undefined} size="lg">
+      {body}
+    </Modal>
+  );
+}
+
 function Cell({ c, onOpen, view, compact = false }: { c: CategoryResult; onOpen: () => void; view: View; compact?: boolean }) {
   const pct = c.attainment == null ? null : c.attainment * 100;
   const status = c.applicable ? statusOf(pct) : "none";
@@ -235,11 +364,17 @@ function Cell({ c, onOpen, view, compact = false }: { c: CategoryResult; onOpen:
 }
 
 function ScoreBlock({ s, prev, data, company, range }: { s: Row["s"]; prev: Row["prev"]; data: BoardData; company: Company; range: Range }) {
+  const drill = useDrill();
   const trend = trendMonths(range, 6)
     .slice(-12)
     .map((p) => companyScore(data, company.id, p).score);
   return (
-    <>
+    <button
+      type="button"
+      onClick={() => drill.open(company.slug, "score")}
+      title="Where this score comes from"
+      className="-mx-2 -my-1 block cursor-pointer rounded-lg px-2 py-1 text-left transition-colors hover:bg-mist-100"
+    >
       <div className="flex items-center gap-2">
         <span className="flex items-center gap-1.5">
           <span className={cn("size-2 rounded-full", dot[s.status])} aria-hidden />
@@ -252,7 +387,7 @@ function ScoreBlock({ s, prev, data, company, range }: { s: Row["s"]; prev: Row[
           {s.score >= prev.score ? "▲" : "▼"} {Math.abs(s.score - prev.score).toFixed(1)} vs before
         </span>
       )}
-    </>
+    </button>
   );
 }
 
