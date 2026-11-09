@@ -1,11 +1,11 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight, ClipboardPen, RefreshCw } from "lucide-react";
-import { companyScore, DEV_SNAPSHOT, measureSeries, useBoard, type BoardData } from "../lib/board";
+import { companyScore, DEV_SNAPSHOT, measureSeries, useBoard, type BoardData, type Range } from "../lib/board";
 import { statusOf, type MeasureResult } from "../lib/scoring";
-import { money, monthLabel, unitValue } from "../lib/format";
+import { money, unitValue } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { Sheet, StatusBadge } from "./ui";
-import { usePeriod } from "./board-bits";
+import { rangeLabel, rangeNoun, useRange } from "./board-bits";
 import { AttainmentBar, BreakdownBars, MeasureTrend } from "./viz";
 
 /**
@@ -39,7 +39,7 @@ export function useDrill() {
 export function Drilldown() {
   const { data } = useBoard();
   const drill = useDrill();
-  const [period] = usePeriod();
+  const { range } = useRange();
   const company = data?.companies.find((c) => c.slug === drill.slug);
   const cat = data?.categories.find((c) => c.code === drill.category);
   const open = Boolean(data && company && cat);
@@ -52,25 +52,25 @@ export function Drilldown() {
         company && cat ? (
           <div className="min-w-0">
             <p className="eyebrow truncate">
-              {company.name} · {monthLabel(period)}
+              {company.name} · {rangeLabel(range)}
             </p>
             <p className="truncate font-display text-lg font-medium text-ink">{cat.name}</p>
           </div>
         ) : null
       }
     >
-      {open && data && company && cat && <Body data={data} companyId={company.id} slug={company.slug} categoryCode={cat.code} period={period} />}
+      {open && data && company && cat && <Body data={data} companyId={company.id} slug={company.slug} categoryCode={cat.code} range={range} />}
     </Sheet>
   );
 }
 
-function Body({ data, companyId, slug, categoryCode, period }: { data: BoardData; companyId: string; slug: string; categoryCode: string; period: string }) {
-  const s = companyScore(data, companyId, period);
+function Body({ data, companyId, slug, categoryCode, range }: { data: BoardData; companyId: string; slug: string; categoryCode: string; range: Range }) {
+  const s = companyScore(data, companyId, range);
   const c = s.categories.find((x) => x.def.code === categoryCode)!;
   const status = statusOf(c.attainment == null ? null : c.attainment * 100);
   const { role } = useAuth();
   const editable = DEV_SNAPSHOT || canEdit(role);
-  const m = period.slice(0, 7);
+  const m = range.to.slice(0, 7);
 
   return (
     <div className="space-y-4 p-4 sm:p-5">
@@ -92,10 +92,10 @@ function Body({ data, companyId, slug, categoryCode, period }: { data: BoardData
       </div>
 
       {c.measures.map((mr) => (
-        <MeasureBlock key={mr.def.code} data={data} companyId={companyId} mr={mr} period={period} recordHref={editable ? `/entry?c=${slug}&m=${m}` : null} />
+        <MeasureBlock key={mr.def.code} data={data} companyId={companyId} mr={mr} range={range} recordHref={editable ? `/entry?c=${slug}&m=${m}` : null} />
       ))}
 
-      <Link to={`/c/${slug}?m=${m}`} className="flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-brand-700 hover:underline">
+      <Link to={`/c/${slug}?from=${range.from.slice(0, 7)}&to=${m}`} className="flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-brand-700 hover:underline">
         Open the full scorecard <ArrowRight className="size-4" />
       </Link>
     </div>
@@ -107,16 +107,18 @@ function howWorkedOut(mr: MeasureResult): string | null {
   if (!d) return null;
   switch (mr.def.code) {
     case "sales_vs_target":
-      return d.sales_rows != null ? `Total of ${d.sales_rows} sales lines dated this month.` : null;
+      return d.sales_rows != null ? `Total of ${d.sales_rows.toLocaleString("en-PH")} sales lines${d.months_reported > 1 ? ` across ${d.months_reported} months` : " dated this month"}.` : null;
     case "gross_margin":
       return d.income != null ? `${money(d.income)} gross profit on ${money(d.sales)} of sales.` : null;
     case "pipeline_cover":
       return d.open_quotes_value != null
-        ? `${money(d.open_quotes_value)} in quotes still pending (${d.quote_lines} lines from the last ${d.window_days} days) ÷ the ${money(d.sales_target)} monthly target.`
+        ? d.months_reported > 1
+          ? `Average of the ${d.months_reported} month-end readings: quotes still pending from the 60 days before each month end ÷ the monthly target.`
+          : `${money(d.open_quotes_value)} in quotes still pending (${d.quote_lines} lines from the last ${d.window_days} days) ÷ the ${money(d.sales_target)} monthly target.`
         : null;
     case "collections":
       return d.amount_due != null
-        ? `${money(d.collected)} collected of the ${money(d.amount_due)} that fell due this month (${d.lines_due} delivered lines).`
+        ? `${money(d.collected)} collected of the ${money(d.amount_due)} that fell due${d.months_reported > 1 ? " in the period" : " this month"} (${d.lines_due.toLocaleString("en-PH")} delivered lines).`
         : null;
     default:
       return null;
@@ -127,17 +129,17 @@ function MeasureBlock({
   data,
   companyId,
   mr,
-  period,
+  range,
   recordHref,
 }: {
   data: BoardData;
   companyId: string;
   mr: MeasureResult;
-  period: string;
+  range: Range;
   recordHref: string | null;
 }) {
   const status = statusOf(mr.attainment == null ? null : mr.attainment * 100);
-  const series = measureSeries(data, companyId, mr.def.code, period, 12);
+  const series = measureSeries(data, companyId, mr.def.code, range);
   const hasHistory = series.some((p) => p.value != null);
   const breakdowns = ((mr.row?.detail as { breakdowns?: { title: string; unit: "php" | "pct"; rows: { label: string; value: number }[] }[] } | null)
     ?.breakdowns ?? []).filter((b) => b.rows.length);
@@ -177,7 +179,7 @@ function MeasureBlock({
       <div className="px-4 pt-3">
         {mr.actual == null ? (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-mist-50 px-3 py-2.5 text-sm text-ink-muted">
-            Not recorded for {monthLabel(period, "MMMM")}.
+            Not recorded for {rangeNoun(range)}.
             {recordHref && mr.source !== "system" && (
               <Link to={recordHref} className="inline-flex items-center gap-1.5 font-medium text-brand-700 hover:underline">
                 <ClipboardPen className="size-3.5" /> Record it
@@ -195,7 +197,7 @@ function MeasureBlock({
 
       {hasHistory && (
         <div className="px-2 pt-3">
-          <p className="px-2 pb-1 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">Last 12 months</p>
+          <p className="px-2 pb-1 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">Month by month</p>
           <MeasureTrend data={series} unit={mr.def.unit} band={mr.def.band} direction={mr.def.direction} />
         </div>
       )}

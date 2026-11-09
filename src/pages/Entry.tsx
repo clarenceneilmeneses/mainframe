@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Lock, RefreshCw } from "lucide-react";
-import { BOARD_KEY, DEV_SNAPSHOT, useBoard, type BoardData, type Company } from "../lib/board";
+import { KeyRound, Lock, RefreshCw } from "lucide-react";
+import { BOARD_KEY, DEV_SNAPSHOT, defaultPeriod, useBoard, type BoardData, type Company } from "../lib/board";
 import { targetFor, type MeasureDef } from "../lib/scoring";
 import { errorMessage, supabase } from "../lib/supabase";
 import { monthLabel } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
-import { Button, Card, CardHeader, ErrorBox, Input, PageHeader, Tabs } from "../components/ui";
-import { BoardGate, usePeriod } from "../components/board-bits";
+import { Button, Card, CardHeader, EmptyState, ErrorBox, Input, PageHeader, Tabs } from "../components/ui";
+import { BoardGate, MonthSelect } from "../components/board-bits";
 
 const UNIT_HINT: Record<MeasureDef["unit"], string> = {
   php: "₱",
@@ -26,8 +26,21 @@ const UNIT_HINT: Record<MeasureDef["unit"], string> = {
  */
 export default function Entry() {
   const { data } = useBoard();
-  const [period] = usePeriod();
   const [params, setParams] = useSearchParams();
+  // This page works one month at a time (?m=2026-07), defaulting to the newest month with results.
+  const m = params.get("m");
+  const period = m && /^d{4}-d{2}$/.test(m) ? `${m}-01` : defaultPeriod(data);
+  const setParam = (k: string, v: string) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set(k, v);
+        return next;
+      },
+      { replace: true },
+    );
+  const { session } = useAuth();
+  const location = useLocation();
   const slug = params.get("c") ?? data?.companies[0]?.slug ?? "";
   const company = data?.companies.find((c) => c.slug === slug) ?? data?.companies[0];
   const { role } = useAuth();
@@ -39,22 +52,31 @@ export default function Entry() {
         eyebrow="Manage"
         title="Record results"
         description={`Type in the figures for ${monthLabel(period)}. Leave a box empty if you don't have it yet; it won't count against the score. Synced figures fill in by themselves.`}
+        actions={<MonthSelect value={period} onChange={(p) => setParam("m", p.slice(0, 7))} />}
       />
+      {!DEV_SNAPSHOT && !session ? (
+        <EmptyState
+          icon={<KeyRound />}
+          title="Sign in to record results"
+          action={
+            <Link
+              to="/login"
+              state={{ from: location.pathname + location.search }}
+              className="inline-flex h-10 items-center rounded-xl bg-brand-700 px-4 text-sm font-medium text-mist-50 shadow-level-1 hover:bg-brand-700/90"
+            >
+              Sign in
+            </Link>
+          }
+        >
+          Anyone with the link can look at the board. Changing it needs an account.
+        </EmptyState>
+      ) : (
       <BoardGate>
         {(d) => (
           <div className="space-y-5">
             <Tabs
               value={company?.slug ?? ""}
-              onChange={(v) =>
-                setParams(
-                  (prev) => {
-                    const next = new URLSearchParams(prev);
-                    next.set("c", v);
-                    return next;
-                  },
-                  { replace: true },
-                )
-              }
+              onChange={(v) => setParam("c", v)}
               items={d.companies.map((c) => ({ value: c.slug, label: c.name }))}
             />
             {!editable && (
@@ -64,6 +86,7 @@ export default function Entry() {
           </div>
         )}
       </BoardGate>
+      )}
     </>
   );
 }

@@ -269,3 +269,56 @@ export function BreakdownBars({ rows, unit }: { rows: { label: string; value: nu
     </ul>
   );
 }
+
+/**
+ * Weight vs earned — the scorecard's own question: each category could earn
+ * its weight; how much of it did it actually earn? The track is the weight,
+ * the fill is what was earned. Categories with no figure are hatched.
+ */
+export function WeightVsEarned({
+  rows,
+}: {
+  rows: { code: string; name: string; weight: number; earned: number | null; status: Status; applicable: boolean }[];
+}) {
+  const maxW = Math.max(...rows.map((r) => r.weight), 1);
+  const earned = rows.reduce((a, r) => a + (r.earned ?? 0), 0);
+  const reportedWeight = rows.filter((r) => r.earned != null).reduce((a, r) => a + r.weight, 0);
+  return (
+    <div>
+      <ul className="space-y-3">
+        {rows.map((r) => (
+          <li key={r.code} className={cn(!r.applicable && "opacity-40")}>
+            <div className="mb-1 flex items-baseline justify-between gap-3 text-[13px]">
+              <span className="min-w-0 truncate text-ink-soft">{r.name}</span>
+              <span className="shrink-0 tabular-nums">
+                {r.earned == null ? (
+                  <span className="text-ink-muted">{r.applicable ? "—" : "n/a"}</span>
+                ) : (
+                  <span className="font-medium text-ink">{r.earned.toFixed(1)}</span>
+                )}
+                <span className="text-ink-muted"> of {r.weight}</span>
+              </span>
+            </div>
+            {/* The track is as long as the weight, so a 30% category is visibly bigger than a 4% one. */}
+            <div className={cn("relative h-2.5 rounded-full bg-mist-100", r.earned == null && "hatch")} style={{ width: `${(r.weight / maxW) * 100}%` }}>
+              {r.earned != null && (
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full"
+                  style={{ width: `${Math.max(2, (r.earned / r.weight) * 100)}%`, background: statusStroke[r.status] }}
+                />
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2 border-t border-mist-200 pt-3 text-sm">
+        <span className="text-ink-soft">Earned</span>
+        <span className="tabular-nums">
+          <span className="font-display text-xl text-ink">{earned.toFixed(1)}</span>
+          <span className="text-ink-muted"> of 100 weight points</span>
+          {reportedWeight < 100 && <span className="block text-right text-xs text-ink-muted">{reportedWeight} of the 100 have a figure</span>}
+        </span>
+      </div>
+    </div>
+  );
+}

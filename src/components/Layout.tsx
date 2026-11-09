@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Building2,
   ChevronRight,
@@ -18,8 +18,7 @@ import {
 import { useAuth } from "../lib/auth";
 import { DEV_SNAPSHOT, useBoard, type Company } from "../lib/board";
 import { cn } from "../lib/utils";
-import { Button, Spinner } from "./ui";
-import { MonthNav, useWithMonth } from "./board-bits";
+import { PeriodPicker, useWithPeriod } from "./board-bits";
 import { Drilldown } from "./Drilldown";
 
 /**
@@ -88,7 +87,7 @@ function Wordmark({ compact = false }: { compact?: boolean }) {
 function NavList({ collapsed = false, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
   const { pathname } = useLocation();
   const nav = useNav();
-  const withMonth = useWithMonth();
+  const withPeriod = useWithPeriod();
   const [folded, setFolded] = useState<string[]>([]);
   useEffect(() => {
     try {
@@ -135,7 +134,7 @@ function NavList({ collapsed = false, onNavigate }: { collapsed?: boolean; onNav
                   return (
                     <NavLink
                       key={to}
-                      to={to === "/scorecard" ? to : withMonth(to)}
+                      to={to === "/scorecard" || to === "/entry" ? to : withPeriod(to)}
                       end={to === "/"}
                       onClick={onNavigate}
                       title={collapsed ? label : undefined}
@@ -215,7 +214,7 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const nav = useNav();
-  const withMonth = useWithMonth();
+  const withPeriod = useWithPeriod();
 
   useEffect(() => setOpen(false), [location.pathname]);
   useEffect(() => {
@@ -237,31 +236,16 @@ export default function Layout() {
     });
   }
 
-  if (!DEV_SNAPSHOT) {
-    if (loading) return <Spinner className="min-h-screen" />;
-    if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-    if (!role) {
-      return (
-        <div className="flex min-h-screen items-center justify-center bg-mist-100 p-4">
-          <div className="max-w-sm rounded-3xl bg-white p-8 text-center shadow-level-3">
-            <img src="/nam-mark.png" alt="" className="mx-auto size-16 object-contain" />
-            <h1 className="mt-4 font-display text-2xl font-medium">No access yet</h1>
-            <p className="mt-2 text-sm text-ink-muted">
-              {session.user.email} is signed in but isn't on the members list. Ask the owner to add this email.
-            </p>
-            <Button variant="secondary" className="mt-5" onClick={() => void signOut()}>
-              Sign out
-            </Button>
-          </div>
-        </div>
-      );
-    }
-  }
-
+  // Viewing needs no sign-in (the private view link covers it). Signing in is
+  // only for the people who record results or change targets.
+  const signedIn = DEV_SNAPSHOT || Boolean(session);
+  void loading;
   const email = DEV_SNAPSHOT ? "preview@local" : (session?.user.email ?? "");
   const path = location.pathname.replace(/\/$/, "") || "/";
   const allTabs = nav.flatMap((g) => g.tabs);
   const tab = [...allTabs].sort((a, b) => b.to.length - a.to.length).find((t) => isActive(t.to, path));
+  // Record results works one month at a time and Targets has no period, so they keep the picker out of the bar.
+  const showPeriod = path !== "/scorecard" && path !== "/entry";
 
   return (
     <div className="min-h-screen bg-mist-100 [--mobile-nav-space:calc(5.75rem+env(safe-area-inset-bottom))] lg:[--mobile-nav-space:0px]">
@@ -332,13 +316,19 @@ export default function Layout() {
                   Local preview data
                 </span>
               )}
-              {path !== "/scorecard" && <MonthNav className="hidden sm:flex" />}
+              {showPeriod && <PeriodPicker className="hidden sm:block" />}
               <LiveClock />
-              <AccountMenu email={email} role={DEV_SNAPSHOT ? "owner" : (role ?? "")} onSignOut={() => void signOut()} />
+              {signedIn ? (
+                <AccountMenu email={email} role={DEV_SNAPSHOT ? "owner" : (role ?? "no access")} onSignOut={() => void signOut()} />
+              ) : (
+                <Link to="/login" state={{ from: location.pathname }} className="text-sm font-medium whitespace-nowrap text-ink-muted hover:text-brand-700">
+                  Sign in
+                </Link>
+              )}
             </div>
-            {path !== "/scorecard" && (
+            {showPeriod && (
               <div className="flex justify-center border-t border-mist-200/70 px-4 py-2 sm:hidden">
-                <MonthNav />
+                <PeriodPicker />
               </div>
             )}
           </header>
@@ -365,7 +355,7 @@ export default function Layout() {
             return (
               <Link
                 key={to}
-                to={to === "/scorecard" ? to : withMonth(to)}
+                to={to === "/scorecard" || to === "/entry" ? to : withPeriod(to)}
                 aria-current={on ? "page" : undefined}
                 className={cn(
                   "relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full py-1.5 text-[11px] font-medium transition-colors",

@@ -6,25 +6,26 @@ import {
   companyScore,
   DEV_SNAPSHOT,
   lastSync,
-  monthsEnding,
+  trendMonths,
   useBoard,
   useCompanyTrend,
   type BoardData,
   type Company,
+  type Range,
 } from "../lib/board";
 import { statusOf, type CategoryResult, type CompanyScore, type MeasureResult } from "../lib/scoring";
-import { monthLabel, prettyDateTime, unitValue } from "../lib/format";
+import { prettyDateTime, unitValue } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
 import { Card, CardHeader, EmptyState, PageHeader, StatTile, StatusBadge } from "../components/ui";
-import { BoardGate, usePeriod } from "../components/board-bits";
+import { BoardGate, rangeNoun, useRange } from "../components/board-bits";
 import { useDrill } from "../components/Drilldown";
-import { AmountVsTarget, AttainmentBar, ScoreRing, ScoreTrend } from "../components/viz";
+import { AmountVsTarget, AttainmentBar, ScoreRing, ScoreTrend, WeightVsEarned } from "../components/viz";
 
 export default function CompanyPage() {
   const { slug } = useParams();
   const { data } = useBoard();
-  const [period] = usePeriod();
+  const { range, label } = useRange();
   const company = data?.companies.find((c) => c.slug === slug);
   const { role } = useAuth();
   const editable = DEV_SNAPSHOT || canEdit(role);
@@ -34,12 +35,12 @@ export default function CompanyPage() {
       <PageHeader
         eyebrow="Scorecard"
         title={company?.name ?? "Business"}
-        description={`${monthLabel(period)}${company?.description ? ` · ${company.description}` : ""}`}
+        description={`${label}${company?.description ? ` · ${company.description}` : ""}`}
         actions={
           <>
             {editable && company && (
               <Link
-                to={`/entry?c=${company.slug}&m=${period.slice(0, 7)}`}
+                to={`/entry?c=${company.slug}&m=${range.to.slice(0, 7)}`}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-medium text-mist-50 shadow-level-1 hover:bg-brand-700/90"
               >
                 <ClipboardPen className="size-4" /> Record results
@@ -51,7 +52,7 @@ export default function CompanyPage() {
       <BoardGate>
         {(d) =>
           company ? (
-            <Body data={d} company={company} period={period} />
+            <Body data={d} company={company} range={range} />
           ) : (
             <EmptyState icon={<SearchX />} title="No such business">
               It may have been renamed. Pick one from the menu.
@@ -63,9 +64,9 @@ export default function CompanyPage() {
   );
 }
 
-function Body({ data, company, period }: { data: BoardData; company: Company; period: string }) {
-  const s = companyScore(data, company.id, period);
-  const trend = useCompanyTrend(data, company.id, period, 12);
+function Body({ data, company, range }: { data: BoardData; company: Company; range: Range }) {
+  const s = companyScore(data, company.id, range);
+  const trend = useCompanyTrend(data, company.id, range);
   const scoredCats = s.categories.filter((c) => c.attainment != null);
   const best = [...scoredCats].sort((a, b) => (b.attainment ?? 0) - (a.attainment ?? 0))[0];
   const worst = [...scoredCats].sort((a, b) => (a.attainment ?? 0) - (b.attainment ?? 0))[0];
@@ -76,7 +77,7 @@ function Body({ data, company, period }: { data: BoardData; company: Company; pe
   const sales = useMemo(() => {
     const def = data.measures.find((m) => m.code === "sales_vs_target");
     const cm = data.companyMeasures.find((x) => x.company_id === company.id && x.measure_code === "sales_vs_target");
-    const pts = monthsEnding(period, 12).map((p) => {
+    const pts = trendMonths(range).map((p) => {
       const row = data.actuals.find((a) => a.company_id === company.id && a.measure_code === "sales_vs_target" && a.period === p);
       return {
         label: format(parseISO(p), "MMM"),
@@ -85,7 +86,7 @@ function Body({ data, company, period }: { data: BoardData; company: Company; pe
       };
     });
     return { pts, target: cm?.target ?? def?.default_target ?? null, any: pts.some((p) => p.value != null) };
-  }, [data, company.id, period]);
+  }, [data, company.id, range.from, range.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-6">
@@ -118,7 +119,7 @@ function Body({ data, company, period }: { data: BoardData; company: Company; pe
       <Card>
         <CardHeader
           title={`${company.name} — 2027 KPI scorecard`}
-          description={`Results for ${monthLabel(period)}. Click a category to see the numbers underneath.`}
+          description={`Results for ${rangeNoun(range)}. Weight is what a category can earn; Earned is what it did. Click a category to see the numbers underneath.`}
           action={
             company.data_source ? (
               <span className="hidden items-center gap-1.5 text-xs text-ink-muted sm:inline-flex">
@@ -130,13 +131,31 @@ function Body({ data, company, period }: { data: BoardData; company: Company; pe
         <ScorecardTable s={s} onOpen={(code) => drill.open(company.slug, code)} />
       </Card>
 
-      <div className={cn("grid grid-cols-1 gap-6", sales.any && "xl:grid-cols-2")}>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[2fr_3fr]">
         <Card>
-          <CardHeader title="Score by month" description="Last 12 months. The dashed line is 95, on target." />
+          <CardHeader title="Weight vs earned" description="Each bar is as long as the category's weight; the fill is what it earned." />
+          <div className="px-5 py-4">
+            <WeightVsEarned
+              rows={s.categories.map((c) => ({
+                code: c.def.code,
+                name: c.def.name,
+                weight: Number(c.def.weight),
+                earned: c.points,
+                status: statusOf(c.attainment == null ? null : c.attainment * 100),
+                applicable: c.applicable,
+              }))}
+            />
+          </div>
+        </Card>
+        <Card>
+          <CardHeader title="Score by month" description="The dashed line is 95, on target." />
           <div className="px-3 pt-4 pb-3">
             <ScoreTrend data={trend} />
           </div>
         </Card>
+      </div>
+
+      <div className={cn("grid grid-cols-1 gap-6", !sales.any && "hidden")}>
         {sales.any && (
           <Card>
             <CardHeader title="Sales vs monthly target" description="Booked sales per month. The dashed line is the target." />
@@ -228,8 +247,8 @@ function ScorecardTable({ s, onOpen }: { s: CompanyScore; onOpen: (code: string)
               <th className="px-5 py-2.5 font-semibold">KPI category</th>
               <th className="px-3 py-2.5 text-right font-semibold">Weight</th>
               <th className="px-3 py-2.5 font-semibold">Performance target</th>
-              <th className="px-3 py-2.5 font-semibold">This month</th>
-              <th className="px-5 py-2.5 text-right font-semibold">Score</th>
+              <th className="px-3 py-2.5 font-semibold">Result</th>
+              <th className="px-5 py-2.5 text-right font-semibold">Earned / weight</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-mist-200">
@@ -261,7 +280,7 @@ function ScorecardTable({ s, onOpen }: { s: CompanyScore; onOpen: (code: string)
               <td className="px-3 py-3 text-right font-semibold tabular-nums">100%</td>
               <td className="px-3 py-3 text-[13px] text-ink-muted" colSpan={2}>
                 {reportedWeight > 0
-                  ? `${points.toFixed(1)} points earned of the ${reportedWeight} available from the categories that reported`
+                  ? `Earned ${points.toFixed(1)} of 100 weight points. ${reportedWeight < 100 ? `Only ${reportedWeight} of the 100 have a figure, so the score is ${points.toFixed(1)} ÷ ${reportedWeight} × 100.` : ""}`
                   : "No results this month"}
               </td>
               <td className="px-5 py-3 text-right">
