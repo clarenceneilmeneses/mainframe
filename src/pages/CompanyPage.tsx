@@ -17,13 +17,14 @@ import { monthLabel, prettyDateTime, unitValue } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
 import { Card, CardHeader, EmptyState, PageHeader, StatTile, StatusBadge } from "../components/ui";
-import { BoardGate, MonthSelect, usePeriod } from "../components/board-bits";
+import { BoardGate, usePeriod } from "../components/board-bits";
+import { useDrill } from "../components/Drilldown";
 import { AmountVsTarget, AttainmentBar, ScoreRing, ScoreTrend } from "../components/viz";
 
 export default function CompanyPage() {
   const { slug } = useParams();
   const { data } = useBoard();
-  const [period, setPeriod] = usePeriod(data);
+  const [period] = usePeriod();
   const company = data?.companies.find((c) => c.slug === slug);
   const { role } = useAuth();
   const editable = DEV_SNAPSHOT || canEdit(role);
@@ -36,13 +37,12 @@ export default function CompanyPage() {
         description={`${monthLabel(period)}${company?.description ? ` · ${company.description}` : ""}`}
         actions={
           <>
-            <MonthSelect data={data} value={period} onChange={setPeriod} />
             {editable && company && (
               <Link
                 to={`/entry?c=${company.slug}&m=${period.slice(0, 7)}`}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-medium text-mist-50 shadow-level-1 hover:bg-brand-700/90"
               >
-                <ClipboardPen className="size-4" /> Enter results
+                <ClipboardPen className="size-4" /> Record results
               </Link>
             )}
           </>
@@ -65,17 +65,18 @@ export default function CompanyPage() {
 
 function Body({ data, company, period }: { data: BoardData; company: Company; period: string }) {
   const s = companyScore(data, company.id, period);
-  const trend = useCompanyTrend(data, company.id, period, 6);
+  const trend = useCompanyTrend(data, company.id, period, 12);
   const scoredCats = s.categories.filter((c) => c.attainment != null);
   const best = [...scoredCats].sort((a, b) => (b.attainment ?? 0) - (a.attainment ?? 0))[0];
   const worst = [...scoredCats].sort((a, b) => (a.attainment ?? 0) - (b.attainment ?? 0))[0];
   const synced = company.data_source ? lastSync(data, company.id) : null;
+  const drill = useDrill();
 
   // Sales against the monthly target, where the business reports sales.
   const sales = useMemo(() => {
     const def = data.measures.find((m) => m.code === "sales_vs_target");
     const cm = data.companyMeasures.find((x) => x.company_id === company.id && x.measure_code === "sales_vs_target");
-    const pts = monthsEnding(period, 6).map((p) => {
+    const pts = monthsEnding(period, 12).map((p) => {
       const row = data.actuals.find((a) => a.company_id === company.id && a.measure_code === "sales_vs_target" && a.period === p);
       return {
         label: format(parseISO(p), "MMM"),
@@ -117,7 +118,7 @@ function Body({ data, company, period }: { data: BoardData; company: Company; pe
       <Card>
         <CardHeader
           title={`${company.name} — 2027 KPI scorecard`}
-          description={`Results for ${monthLabel(period)}. Each category earns its weight × how close its measures came to target.`}
+          description={`Results for ${monthLabel(period)}. Click a category to see the numbers underneath.`}
           action={
             company.data_source ? (
               <span className="hidden items-center gap-1.5 text-xs text-ink-muted sm:inline-flex">
@@ -126,12 +127,12 @@ function Body({ data, company, period }: { data: BoardData; company: Company; pe
             ) : undefined
           }
         />
-        <ScorecardTable s={s} />
+        <ScorecardTable s={s} onOpen={(code) => drill.open(company.slug, code)} />
       </Card>
 
       <div className={cn("grid grid-cols-1 gap-6", sales.any && "xl:grid-cols-2")}>
         <Card>
-          <CardHeader title="Score by month" description="Last six months. The dashed line is 95, on target." />
+          <CardHeader title="Score by month" description="Last 12 months. The dashed line is 95, on target." />
           <div className="px-3 pt-4 pb-3">
             <ScoreTrend data={trend} />
           </div>
@@ -214,7 +215,7 @@ function ScoreCell({ c }: { c: CategoryResult }) {
   );
 }
 
-function ScorecardTable({ s }: { s: CompanyScore }) {
+function ScorecardTable({ s, onOpen }: { s: CompanyScore; onOpen: (code: string) => void }) {
   const reportedWeight = s.categories.filter((c) => c.points != null).reduce((a, c) => a + Number(c.def.weight), 0);
   const points = s.categories.reduce((a, c) => a + (c.points ?? 0), 0);
   return (
@@ -233,8 +234,12 @@ function ScorecardTable({ s }: { s: CompanyScore }) {
           </thead>
           <tbody className="divide-y divide-mist-200">
             {s.categories.map((c) => (
-              <tr key={c.def.code} className="align-top">
-                <td className="px-5 py-3.5 font-medium text-ink">{c.def.name}</td>
+              <tr key={c.def.code} onClick={() => onOpen(c.def.code)} className="cursor-pointer align-top transition-colors hover:bg-mist-50">
+                <td className="px-5 py-3.5 font-medium text-ink">
+                  <button type="button" className="cursor-pointer text-left hover:text-brand-700 hover:underline">
+                    {c.def.name}
+                  </button>
+                </td>
                 <td className="px-3 py-3.5 text-right tabular-nums text-ink-soft">{Number(c.def.weight)}%</td>
                 <td className="max-w-[280px] px-3 py-3.5 text-[13px] leading-snug text-ink-muted">{c.def.target_text}</td>
                 <td className="min-w-[260px] px-3 py-2.5">
@@ -271,7 +276,7 @@ function ScorecardTable({ s }: { s: CompanyScore }) {
       {/* Phone: one card per category. */}
       <ul className="divide-y divide-mist-200 md:hidden">
         {s.categories.map((c) => (
-          <li key={c.def.code} className="space-y-2 px-4 py-4">
+          <li key={c.def.code} className="cursor-pointer space-y-2 px-4 py-4 active:bg-mist-50" onClick={() => onOpen(c.def.code)}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-medium text-ink">{c.def.name}</p>

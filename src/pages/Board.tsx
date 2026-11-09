@@ -1,184 +1,393 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, ClipboardPen, RefreshCw } from "lucide-react";
-import { companyScore, lastSync, useBoard, type BoardData, type Company } from "../lib/board";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2, CircleDashed, CircleHelp, ClipboardPen } from "lucide-react";
+import {
+  companyScore,
+  DEV_SNAPSHOT,
+  groupScore,
+  measureCounts,
+  monthsEnding,
+  prevPeriod,
+  type BoardData,
+  type Company,
+} from "../lib/board";
 import { statusOf, type CategoryResult, type MeasureResult } from "../lib/scoring";
-import { monthLabel, plural, prettyDateTime, unitValue } from "../lib/format";
-import { useAuth, canEdit } from "../lib/auth";
-import { DEV_SNAPSHOT } from "../lib/board";
+import { monthLabel, unitValue } from "../lib/format";
+import { canEdit, useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
-import { Card, PageHeader, StatusBadge } from "../components/ui";
-import { BoardGate, MonthSelect, usePeriod } from "../components/board-bits";
-import { AttainmentBar, ScoreRing } from "../components/viz";
+import { Button, Card, CardHeader, Modal, PageHeader, StatTile, StatusBadge } from "../components/ui";
+import { BoardGate, usePeriod } from "../components/board-bits";
+import { useDrill } from "../components/Drilldown";
+import { HowItScoresSteps } from "../components/HowItScores";
+import { ScoreRing, Sparkbars } from "../components/viz";
 import { companyIcon } from "../components/Layout";
 
+/** Short column heads for the matrix; the full names are in the tooltip and the drill-down. */
+const SHORT: Record<string, string> = {
+  sales: "Sales",
+  finance: "Finance",
+  projects: "Projects",
+  procurement: "Procurement",
+  supply: "Delivery",
+  quality: "Quality",
+  hr: "People",
+  governance: "Governance",
+  customer: "Customers",
+};
+
+const tint = {
+  on: "bg-good-50 hover:ring-good/40",
+  watch: "bg-watch-50 hover:ring-watch/40",
+  off: "bg-off-50 hover:ring-off/40",
+  none: "hatch bg-mist-50 hover:ring-mist-300",
+} as const;
+const dot = { on: "bg-good", watch: "bg-watch", off: "bg-off", none: "bg-mist-300" } as const;
+
 /**
- * The KPI Monitoring Board: one panel per business, stacked, as on the CEO's
- * sketch. Each shows its weighted score for the month and the nine scorecard
- * categories at a glance; a panel opens that business's full scorecard.
+ * The KPI board. Top to bottom: the headline numbers, every business against
+ * every category in one grid (click a cell to drill in), then what needs
+ * attention and what hasn't been reported.
  */
 export default function Board() {
-  const { data } = useBoard();
-  const [period, setPeriod] = usePeriod(data);
+  const [period] = usePeriod();
   const { role } = useAuth();
   const editable = DEV_SNAPSHOT || canEdit(role);
+  const [howOpen, setHowOpen] = useState(false);
 
   return (
     <>
       <PageHeader
         eyebrow="2027 KPI scorecard"
-        title="KPI Monitoring Board"
-        description={`${monthLabel(period)} · every business on the same nine categories, weights totalling 100.`}
+        title="KPI board"
+        description={`${monthLabel(period)} · how each business is tracking against its targets.`}
         actions={
           <>
-            <MonthSelect data={data} value={period} onChange={setPeriod} />
+            <Button variant="secondary" onClick={() => setHowOpen(true)}>
+              <CircleHelp className="size-4" /> How it's scored
+            </Button>
             {editable && (
               <Link
                 to={`/entry?m=${period.slice(0, 7)}`}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-medium text-mist-50 shadow-level-1 hover:bg-brand-700/90"
               >
-                <ClipboardPen className="size-4" /> Enter results
+                <ClipboardPen className="size-4" /> Record results
               </Link>
             )}
           </>
         }
       />
-      <BoardGate>
-        {(d) => (
-          <div className="space-y-5">
-            {d.companies.map((c) => (
-              <CompanyPanel key={c.id} data={d} company={c} period={period} />
-            ))}
-            <Legend />
-          </div>
-        )}
-      </BoardGate>
+      <BoardGate>{(d) => <Body data={d} period={period} />}</BoardGate>
+      <Modal open={howOpen} onClose={() => setHowOpen(false)} title="How the score is worked out" description="The same rule for every business, every month." size="lg">
+        <div className="-mx-6 -my-5 overflow-hidden">
+          <HowItScoresSteps />
+        </div>
+      </Modal>
     </>
   );
 }
 
-function CompanyPanel({ data, company, period }: { data: BoardData; company: Company; period: string }) {
-  const s = companyScore(data, company.id, period);
-  const Icon = companyIcon(data.companies, company.id);
-  const synced = company.data_source ? lastSync(data, company.id) : null;
-  const href = `/c/${company.slug}?m=${period.slice(0, 7)}`;
+function Body({ data, period }: { data: BoardData; period: string }) {
+  const scores = data.companies.map((c) => ({ company: c, s: companyScore(data, c.id, period), prev: companyScore(data, c.id, prevPeriod(period)) }));
+  const group = groupScore(data, period);
+  const groupPrev = groupScore(data, prevPeriod(period));
+  const counts = scores.map((x) => measureCounts(x.s)).reduce(
+    (a, c) => ({ on: a.on + c.on, watch: a.watch + c.watch, off: a.off + c.off, missing: a.missing + c.missing }),
+    { on: 0, watch: 0, off: 0, missing: 0 },
+  );
+  const reported = counts.on + counts.watch + counts.off;
+  const total = reported + counts.missing;
 
   return (
-    <Card className="overflow-hidden">
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(250px,290px)_1fr]">
-        {/* The business and its score. */}
-        <div className="flex flex-col gap-4 border-b border-mist-200 bg-mist-50 p-5 lg:border-r lg:border-b-0">
-          <div className="flex items-start gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-brand-50 text-brand-700">
-              <Icon className="size-5" />
-            </span>
-            <div className="min-w-0">
-              <h2 className="font-display text-lg leading-tight font-medium text-ink">{company.name}</h2>
-              {company.description && <p className="mt-0.5 line-clamp-2 text-xs text-ink-muted">{company.description}</p>}
-            </div>
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <Card className="col-span-2 flex items-center gap-4 p-5 lg:col-span-1">
+          <ScoreRing score={group} status={statusOf(group)} size={84} stroke={8} />
+          <div className="min-w-0">
+            <p className="eyebrow">Group score</p>
+            <Delta now={group} before={groupPrev} className="mt-1.5" />
+            <p className="mt-1 text-xs text-ink-muted">Average of the businesses that reported</p>
           </div>
-          <div className="flex items-center gap-4">
-            <ScoreRing score={s.score} status={s.status} size={104} />
-            <div className="min-w-0 space-y-2">
-              <StatusBadge status={s.status} />
-              <p className="text-xs leading-snug text-ink-muted">
-                {s.score == null
-                  ? `Nothing recorded for ${monthLabel(period, "MMMM")} yet.`
-                  : `Scored on ${Math.round(s.coverage)}% of the scorecard · ${s.measuresReported} of ${plural(s.measuresApplicable, "measure")} in.`}
-              </p>
-            </div>
-          </div>
-          <div className="mt-auto flex flex-wrap items-center justify-between gap-2 text-xs text-ink-muted">
-            <span className="inline-flex items-center gap-1.5">
-              {company.data_source ? (
-                <>
-                  <RefreshCw className="size-3.5" />
-                  {synced ? `Synced ${prettyDateTime(synced)}` : "Waiting for first sync"}
-                </>
-              ) : (
-                "Entered monthly"
-              )}
-            </span>
-            <Link to={href} className="inline-flex items-center gap-1 font-medium text-brand-700 hover:underline">
-              Open scorecard <ArrowRight className="size-3.5" />
-            </Link>
-          </div>
-        </div>
+        </Card>
+        <StatTile
+          label="KPIs on target"
+          value={
+            <>
+              {counts.on}
+              <span className="text-base text-ink-muted"> / {reported}</span>
+            </>
+          }
+          sub="of the measures reported"
+          icon={<CheckCircle2 />}
+        />
+        <StatTile
+          label="Below target"
+          value={counts.off + counts.watch}
+          sub={`${counts.off} off target · ${counts.watch} to watch`}
+          icon={<AlertTriangle />}
+          tone={counts.off > 0 ? "warn" : "default"}
+        />
+        <StatTile
+          label="Not reported"
+          value={
+            <>
+              {counts.missing}
+              <span className="text-base text-ink-muted"> / {total}</span>
+            </>
+          }
+          sub="measures with no figure this month"
+          icon={<CircleDashed />}
+          className="col-span-2 lg:col-span-1"
+        />
+      </div>
 
-        {/* The nine categories. */}
-        <ul className="grid grid-cols-1 gap-px bg-mist-200 sm:grid-cols-2 xl:grid-cols-3">
-          {s.categories.map((c) => (
-            <CategoryCell key={c.def.code} cat={c} href={href} />
+      <Card className="overflow-hidden">
+        <CardHeader
+          title="Every business, every category"
+          description="Each cell is how close that category came to its target. Click one to see the numbers underneath."
+        />
+        <Matrix data={data} rows={scores} period={period} />
+        <div className="flex flex-wrap items-center gap-2 border-t border-mist-200 px-5 py-3 text-xs text-ink-muted">
+          <StatusBadge status="on" label="On target · 95%+" />
+          <StatusBadge status="watch" label="Watch · 85–94%" />
+          <StatusBadge status="off" label="Off target · under 85%" />
+          <span className="inline-flex items-center gap-1.5">
+            <span className="hatch inline-block size-3.5 rounded bg-mist-50 ring-1 ring-mist-200" /> Not reported
+          </span>
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Attention rows={scores} />
+        <Missing rows={scores} period={period} />
+      </div>
+    </div>
+  );
+}
+
+function Delta({ now, before, className }: { now: number | null; before: number | null; className?: string }) {
+  if (now == null) return <p className={cn("text-xs text-ink-muted", className)}>Nothing reported</p>;
+  const diff = before == null ? null : now - before;
+  return (
+    <p className={cn("flex items-baseline gap-2", className)}>
+      {diff != null && Math.abs(diff) >= 0.05 ? (
+        <span className={cn("inline-flex items-center gap-0.5 text-[13px] font-medium whitespace-nowrap tabular-nums", diff > 0 ? "text-good" : "text-off")}>
+          {diff > 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+          {Math.abs(diff).toFixed(1)} vs last month
+        </span>
+      ) : diff != null ? (
+        <span className="text-xs text-ink-muted">same as last month</span>
+      ) : (
+        <span className="text-xs text-ink-muted">nothing last month to compare</span>
+      )}
+    </p>
+  );
+}
+
+type Row = { company: Company; s: ReturnType<typeof companyScore>; prev: ReturnType<typeof companyScore> };
+
+function Cell({ c, onOpen, compact = false }: { c: CategoryResult; onOpen: () => void; compact?: boolean }) {
+  const pct = c.attainment == null ? null : c.attainment * 100;
+  const status = c.applicable ? statusOf(pct) : "none";
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={!c.applicable}
+      title={`${c.def.name}: ${pct == null ? "not reported" : `${Math.round(pct)}% of target, ${c.points?.toFixed(1)} of ${c.def.weight} points`}`}
+      className={cn(
+        "flex w-full cursor-pointer flex-col items-center justify-center rounded-lg ring-1 ring-transparent transition-shadow disabled:cursor-default disabled:opacity-40",
+        compact ? "h-12" : "h-14",
+        tint[status],
+      )}
+    >
+      <span className="font-display text-[15px] leading-none text-ink tabular-nums">{!c.applicable ? "n/a" : pct == null ? "—" : `${Math.round(pct)}%`}</span>
+      {c.points != null && (
+        <span className="mt-1 text-[10px] text-ink-muted tabular-nums">
+          {c.points.toFixed(1)}/{Number(c.def.weight)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function Matrix({ data, rows, period }: { data: BoardData; rows: Row[]; period: string }) {
+  const drill = useDrill();
+  const cats = [...data.categories].sort((a, b) => a.sort - b.sort);
+  const m = period.slice(0, 7);
+  const trendOf = (companyId: string) => monthsEnding(period, 6).map((p) => companyScore(data, companyId, p).score);
+
+  return (
+    <>
+      {/* Laptop: businesses down, categories across. */}
+      <div className="hidden overflow-x-clip lg:block">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[210px]" />
+            <col className="w-[132px]" />
+            {cats.map((c) => (
+              <col key={c.code} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr className="text-[11px] text-ink-muted">
+              <th className="px-5 pt-3 pb-2 text-left font-semibold tracking-[0.12em] uppercase">Business</th>
+              <th className="px-2 pt-3 pb-2 text-left font-semibold tracking-[0.12em] uppercase">Score</th>
+              {cats.map((c) => (
+                <th key={c.code} className="px-1 pt-3 pb-2 text-center font-medium" title={c.name}>
+                  <span className="block truncate text-[12px] text-ink-soft">{SHORT[c.code] ?? c.name}</span>
+                  <span className="tabular-nums">{Number(c.weight)}%</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ company, s, prev }) => {
+              const Icon = companyIcon(data.companies, company.id);
+              return (
+                <tr key={company.id} className="border-t border-mist-200">
+                  <td className="px-5 py-3">
+                    <Link to={`/c/${company.slug}?m=${m}`} className="group flex items-center gap-2.5">
+                      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-brand-50 text-brand-700">
+                        <Icon className="size-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-ink group-hover:text-brand-700 group-hover:underline">{company.name}</span>
+                        <span className="block text-xs text-ink-muted">{s.score == null ? "Nothing reported" : `${Math.round(s.coverage)}% reported`}</span>
+                      </span>
+                    </Link>
+                  </td>
+                  <td className="px-2 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <span className={cn("size-2 rounded-full", dot[s.status])} aria-hidden />
+                        <span className="font-display text-lg text-ink tabular-nums">{s.score == null ? "—" : s.score.toFixed(1)}</span>
+                      </span>
+                      <Sparkbars values={trendOf(company.id)} />
+                    </div>
+                    {s.score != null && prev.score != null && (
+                      <span className={cn("text-[11px] tabular-nums", s.score >= prev.score ? "text-good" : "text-off")}>
+                        {s.score >= prev.score ? "▲" : "▼"} {Math.abs(s.score - prev.score).toFixed(1)} vs last month
+                      </span>
+                    )}
+                  </td>
+                  {s.categories.map((c) => (
+                    <td key={c.def.code} className="px-1 py-2">
+                      <Cell c={c} onOpen={() => drill.open(company.slug, c.def.code)} />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Phone and tablet: one block per business, the categories in a 3 × 3 grid. */}
+      <ul className="divide-y divide-mist-200 lg:hidden">
+        {rows.map(({ company, s }) => (
+          <li key={company.id} className="px-4 py-4">
+            <Link to={`/c/${company.slug}?m=${m}`} className="mb-3 flex items-center justify-between gap-3">
+              <span className="min-w-0">
+                <span className="block truncate font-medium text-ink">{company.name}</span>
+                <span className="block text-xs text-ink-muted">{s.score == null ? "Nothing reported" : `${Math.round(s.coverage)}% reported`}</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5">
+                <span className={cn("size-2 rounded-full", dot[s.status])} aria-hidden />
+                <span className="font-display text-xl tabular-nums">{s.score == null ? "—" : s.score.toFixed(1)}</span>
+                <ArrowRight className="size-4 text-ink-muted" />
+              </span>
+            </Link>
+            <div className="grid grid-cols-3 gap-1.5">
+              {s.categories.map((c) => (
+                <div key={c.def.code} className="min-w-0">
+                  <Cell c={c} compact onOpen={() => drill.open(company.slug, c.def.code)} />
+                  <p className="mt-1 truncate text-center text-[11px] text-ink-muted">{SHORT[c.def.code] ?? c.def.name}</p>
+                </div>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function Attention({ rows }: { rows: Row[] }) {
+  const drill = useDrill();
+  const items = rows
+    .flatMap(({ company, s }) =>
+      s.categories.flatMap((c) =>
+        c.measures
+          .filter((m) => m.attainment != null && m.attainment < 0.95)
+          .map((m) => ({ company, cat: c, m })),
+      ),
+    )
+    .sort((a, b) => (a.m.attainment ?? 0) - (b.m.attainment ?? 0))
+    .slice(0, 8);
+
+  return (
+    <Card>
+      <CardHeader title="Needs attention" description="Measures below target this month, furthest off first." />
+      {items.length ? (
+        <ul className="divide-y divide-mist-200">
+          {items.map(({ company, cat, m }) => (
+            <li key={`${company.id}:${m.def.code}`}>
+              <button
+                type="button"
+                onClick={() => drill.open(company.slug, cat.def.code)}
+                className="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-mist-50"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-ink">{m.def.name}</span>
+                  <span className="block truncate text-xs text-ink-muted">
+                    {company.name} · {valueVsTarget(m)}
+                  </span>
+                </span>
+                <StatusBadge status={statusOf((m.attainment ?? 0) * 100)} label={`${Math.round((m.attainment ?? 0) * 100)}%`} />
+              </button>
+            </li>
           ))}
         </ul>
-      </div>
+      ) : (
+        <p className="flex items-center gap-2 px-5 py-6 text-sm text-ink-muted">
+          <CheckCircle2 className="size-4 text-good" /> Everything reported is on target.
+        </p>
+      )}
     </Card>
   );
 }
 
-function headline(m: MeasureResult) {
-  if (m.actual == null) return null;
-  return `${unitValue(m.actual, m.def.unit)}${m.target != null && m.def.direction !== "band" ? ` of ${unitValue(m.target, m.def.unit)}` : ""}`;
+function valueVsTarget(m: MeasureResult) {
+  const v = unitValue(m.actual, m.def.unit);
+  if (m.def.direction === "band") return `${v}, aim within ±${unitValue(m.def.band, m.def.unit)}`;
+  return `${v} vs ${unitValue(m.target, m.def.unit)} target`;
 }
 
-function CategoryCell({ cat, href }: { cat: CategoryResult; href: string }) {
-  const pct = cat.attainment == null ? null : cat.attainment * 100;
-  const status = statusOf(pct);
-  const first = cat.measures.find((m) => m.actual != null);
-  const reported = cat.measures.filter((m) => m.actual != null).length;
-  const applicable = cat.measures.filter((m) => m.applicable).length;
-
+function Missing({ rows, period }: { rows: Row[]; period: string }) {
+  const m = period.slice(0, 7);
   return (
-    <li className="bg-white">
-      <Link
-        to={href}
-        className={cn("flex h-full flex-col gap-2 px-4 py-3.5 transition-colors hover:bg-mist-50", !cat.applicable && "opacity-50")}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <span className="text-[13px] leading-snug font-medium text-ink">{cat.def.name}</span>
-          <span className="shrink-0 rounded-full bg-mist-100 px-2 py-0.5 text-[11px] font-semibold text-ink-soft tabular-nums">
-            {Number(cat.def.weight)}%
-          </span>
-        </div>
-        <AttainmentBar value={cat.attainment} status={status} />
-        <div className="flex items-baseline justify-between gap-2 text-xs">
-          <span className="min-w-0 truncate text-ink-muted" title={first ? `${first.def.name}: ${headline(first)}` : undefined}>
-            {!cat.applicable
-              ? "Doesn't apply"
-              : first
-                ? `${first.def.name.split(" ")[0]} ${headline(first)}`
-                : "No result yet"}
-          </span>
-          <span className="shrink-0 text-ink tabular-nums">
-            {cat.points != null ? (
-              <>
-                <span className="font-display text-sm font-medium">{cat.points.toFixed(1)}</span>
-                <span className="text-ink-muted"> / {Number(cat.def.weight)}</span>
-              </>
-            ) : cat.applicable ? (
-              <span className="text-ink-muted">—</span>
-            ) : null}
-          </span>
-        </div>
-        {cat.applicable && reported > 0 && reported < applicable && (
-          <span className="text-[11px] text-ink-muted">{`${reported} of ${applicable} measures in`}</span>
-        )}
-      </Link>
-    </li>
-  );
-}
-
-function Legend() {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-xs text-ink-muted">
-      <StatusBadge status="on" label="On target · 95+" />
-      <StatusBadge status="watch" label="Watch · 85–94" />
-      <StatusBadge status="off" label="Off target · under 85" />
-      <span className="inline-flex items-center gap-1.5">
-        <span className="hatch inline-block h-1.5 w-8 rounded-full bg-mist-100" /> No result yet
-      </span>
-      <Link to="/scorecard" className="text-brand-700 hover:underline">
-        How scores are worked out
-      </Link>
-    </div>
+    <Card>
+      <CardHeader title="Not reported yet" description={`Categories with no figure for ${monthLabel(period, "MMMM")}. They don't count against the score, but they hide it.`} />
+      <ul className="divide-y divide-mist-200">
+        {rows.map(({ company, s }) => {
+          const gaps = s.categories.filter((c) => c.applicable && c.points == null);
+          return (
+            <li key={company.id} className="flex items-start gap-3 px-5 py-3">
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-ink">{company.name}</span>
+                <span className="block text-xs leading-relaxed text-ink-muted">
+                  {gaps.length ? gaps.map((c) => SHORT[c.def.code] ?? c.def.name).join(" · ") : "Everything is in."}
+                </span>
+              </span>
+              {gaps.length > 0 && (
+                <Link to={`/entry?c=${company.slug}&m=${m}`} className="shrink-0 text-sm font-medium text-brand-700 hover:underline">
+                  Record
+                </Link>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

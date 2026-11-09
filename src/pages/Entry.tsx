@@ -10,7 +10,7 @@ import { monthLabel } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
 import { Button, Card, CardHeader, ErrorBox, Input, PageHeader, Tabs } from "../components/ui";
-import { BoardGate, MonthSelect, usePeriod } from "../components/board-bits";
+import { BoardGate, usePeriod } from "../components/board-bits";
 
 const UNIT_HINT: Record<MeasureDef["unit"], string> = {
   php: "₱",
@@ -26,7 +26,7 @@ const UNIT_HINT: Record<MeasureDef["unit"], string> = {
  */
 export default function Entry() {
   const { data } = useBoard();
-  const [period, setPeriod] = usePeriod(data);
+  const [period] = usePeriod();
   const [params, setParams] = useSearchParams();
   const slug = params.get("c") ?? data?.companies[0]?.slug ?? "";
   const company = data?.companies.find((c) => c.slug === slug) ?? data?.companies[0];
@@ -36,10 +36,9 @@ export default function Entry() {
   return (
     <>
       <PageHeader
-        eyebrow="Data"
-        title="Enter results"
-        description={`One figure per measure for ${monthLabel(period)}. Leave a box empty when there's no result; it won't count against the score.`}
-        actions={<MonthSelect data={data} value={period} onChange={setPeriod} />}
+        eyebrow="Manage"
+        title="Record results"
+        description={`Type in the figures for ${monthLabel(period)}. Leave a box empty if you don't have it yet; it won't count against the score. Synced figures fill in by themselves.`}
       />
       <BoardGate>
         {(d) => (

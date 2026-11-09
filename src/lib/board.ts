@@ -4,6 +4,7 @@ import { format, parseISO, startOfMonth, subMonths } from "date-fns";
 import { supabase } from "./supabase";
 import {
   scoreCompany,
+  statusOf,
   type Actual,
   type CategoryDef,
   type CompanyMeasure,
@@ -111,4 +112,40 @@ export function useCompanyTrend(data: BoardData | undefined, companyId: string |
 export function lastSync(data: BoardData, companyId: string) {
   const rows = data.actuals.filter((a) => a.company_id === companyId && a.source === "system");
   return rows.reduce<string | null>((max, r) => (!max || r.updated_at > max ? r.updated_at : max), null);
+}
+
+export function prevPeriod(period: string) {
+  return format(subMonths(parseISO(period), 1), "yyyy-MM-dd");
+}
+
+/** How many of a business's measures are on target, to watch, off, or not in yet. */
+export function measureCounts(s: CompanyScore) {
+  const ms = s.categories.flatMap((c) => c.measures).filter((m) => m.applicable);
+  const counts = { on: 0, watch: 0, off: 0, missing: 0 };
+  for (const m of ms) {
+    if (m.attainment == null) counts.missing++;
+    else counts[statusOf(m.attainment * 100) as "on" | "watch" | "off"]++;
+  }
+  return counts;
+}
+
+/** The average score of the businesses that reported this month. */
+export function groupScore(data: BoardData, period: string) {
+  const scores = data.companies.map((c) => companyScore(data, c.id, period).score).filter((s): s is number => s != null);
+  return scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+}
+
+/** One measure, month by month, for a drill-down chart. */
+export function measureSeries(data: BoardData, companyId: string, measureCode: string, period: string, n = 12) {
+  const def = data.measures.find((m) => m.code === measureCode);
+  const cm = data.companyMeasures.find((x) => x.company_id === companyId && x.measure_code === measureCode);
+  return monthsEnding(period, n).map((p) => {
+    const row = data.actuals.find((a) => a.company_id === companyId && a.measure_code === measureCode && a.period === p);
+    return {
+      period: p,
+      label: format(parseISO(p), "MMM"),
+      value: row ? Number(row.actual) : null,
+      target: row?.target ?? cm?.target ?? def?.default_target ?? null,
+    };
+  });
 }

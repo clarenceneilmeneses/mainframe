@@ -5,9 +5,9 @@ import {
   ChevronRight,
   ClipboardPen,
   Factory,
+  Target,
   LayoutDashboard,
   LayoutGrid,
-  ListChecks,
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
@@ -19,9 +19,11 @@ import { useAuth } from "../lib/auth";
 import { DEV_SNAPSHOT, useBoard, type Company } from "../lib/board";
 import { cn } from "../lib/utils";
 import { Button, Spinner } from "./ui";
+import { MonthNav, useWithMonth } from "./board-bits";
+import { Drilldown } from "./Drilldown";
 
 /**
- * The frame, after Malaya OBS: a floating navy sidebar with foldable groups,
+ * The frame, after Malaya OBS: a floating white sidebar with foldable groups,
  * a content card with a breadcrumb trail, an account menu, and on a phone a
  * nav pill along the bottom with More for the rest.
  */
@@ -55,10 +57,10 @@ function useNav(): { label: string; tabs: Tab[] }[] {
       })),
     },
     {
-      label: "Data",
+      label: "Manage",
       tabs: [
-        { to: "/entry", label: "Enter results", icon: ClipboardPen },
-        { to: "/scorecard", label: "Scorecard", icon: ListChecks },
+        { to: "/entry", label: "Record results", icon: ClipboardPen },
+        { to: "/scorecard", label: "Targets", icon: Target },
       ],
     },
   ];
@@ -72,13 +74,11 @@ function isActive(to: string, pathname: string) {
 function Wordmark({ compact = false }: { compact?: boolean }) {
   return (
     <Link to="/" className="flex min-w-0 items-center gap-3" aria-label="KPI board">
-      <span className="grid size-10 shrink-0 place-items-center rounded-full bg-white ring-1 ring-ice/15">
-        <img src="/nam-mark.png" alt="" className="size-8 object-contain" />
-      </span>
+      <img src="/nam-mark.png" alt="" className="size-10 shrink-0 object-contain" />
       {!compact && (
         <span className="min-w-0 leading-tight">
-          <span className="block font-display text-[15px] tracking-[0.18em] text-ice">NAM GROUP</span>
-          <span className="block truncate text-[10px] tracking-[0.1em] text-ice/60 uppercase">Mainframe</span>
+          <span className="block font-display text-[15px] tracking-[0.18em] text-ink">NAM GROUP</span>
+          <span className="block truncate text-[10px] tracking-[0.1em] text-ink-muted uppercase">Mainframe</span>
         </span>
       )}
     </Link>
@@ -88,6 +88,7 @@ function Wordmark({ compact = false }: { compact?: boolean }) {
 function NavList({ collapsed = false, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
   const { pathname } = useLocation();
   const nav = useNav();
+  const withMonth = useWithMonth();
   const [folded, setFolded] = useState<string[]>([]);
   useEffect(() => {
     try {
@@ -115,13 +116,13 @@ function NavList({ collapsed = false, onNavigate }: { collapsed?: boolean; onNav
         return (
           <div key={group.label} className={gi > 0 ? (collapsed ? "mt-2" : "mt-5") : ""}>
             {collapsed ? (
-              gi > 0 && <div className="mx-auto mb-2 h-px w-5 bg-navy-soft" />
+              gi > 0 && <div className="mx-auto mb-2 h-px w-5 bg-mist-200" />
             ) : (
               <button
                 type="button"
                 onClick={() => toggle(group.label)}
                 aria-expanded={!isFolded}
-                className="flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-3 pb-1.5 text-[11px] font-semibold tracking-[0.14em] text-ice/45 uppercase transition-colors hover:text-ice/70"
+                className="flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-3 pb-1.5 text-[11px] font-semibold tracking-[0.14em] text-ink-muted/70 uppercase transition-colors hover:text-ink-soft"
               >
                 <ChevronRight className={cn("size-3 shrink-0 transition-transform", !isFolded && "rotate-90")} />
                 {group.label}
@@ -134,7 +135,7 @@ function NavList({ collapsed = false, onNavigate }: { collapsed?: boolean; onNav
                   return (
                     <NavLink
                       key={to}
-                      to={to}
+                      to={to === "/scorecard" ? to : withMonth(to)}
                       end={to === "/"}
                       onClick={onNavigate}
                       title={collapsed ? label : undefined}
@@ -143,7 +144,7 @@ function NavList({ collapsed = false, onNavigate }: { collapsed?: boolean; onNav
                       className={cn(
                         "group relative flex items-center rounded-xl text-[15px] transition-colors",
                         collapsed ? "mx-auto size-10 justify-center" : "gap-3 px-3 py-2.5",
-                        active ? "bg-navy-soft text-ice shadow-level-2" : "text-ice/75 hover:bg-navy-soft hover:text-ice",
+                        active ? "bg-brand-50 font-medium text-brand-700" : "text-ink-soft hover:bg-mist-100 hover:text-ink",
                       )}
                     >
                       <Icon className={cn("size-[18px] shrink-0", active ? "opacity-100" : "opacity-80")} />
@@ -214,6 +215,7 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const nav = useNav();
+  const withMonth = useWithMonth();
 
   useEffect(() => setOpen(false), [location.pathname]);
   useEffect(() => {
@@ -263,10 +265,10 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-mist-100 [--mobile-nav-space:calc(5.75rem+env(safe-area-inset-bottom))] lg:[--mobile-nav-space:0px]">
-      {/* Desktop sidebar: a floating navy card. */}
+      {/* Desktop sidebar: a floating white card. */}
       <aside
         className={cn(
-          "fixed inset-y-3 left-3 z-40 hidden flex-col overflow-hidden rounded-2xl bg-navy shadow-level-2 transition-[width] duration-200 lg:flex",
+          "fixed inset-y-3 left-3 z-40 hidden flex-col overflow-hidden rounded-2xl border border-mist-200/80 bg-white shadow-level-2 transition-[width] duration-200 lg:flex",
           collapsed ? "w-[64px]" : "w-[248px]",
         )}
       >
@@ -277,15 +279,15 @@ export default function Layout() {
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-expanded={!collapsed}
             title={collapsed ? "Expand" : "Collapse"}
-            className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-ice/60 hover:bg-navy-soft hover:text-ice"
+            className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-ink-muted hover:bg-mist-100 hover:text-ink"
           >
             {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
           </button>
         </div>
         <NavList collapsed={collapsed} />
         {!collapsed && (
-          <div className="mx-3 mb-3 rounded-xl border border-navy-soft p-3 text-[12px] leading-snug text-ice/60">
-            <span className="block font-medium text-ice/85">2027 KPI scorecard</span>
+          <div className="mx-3 mb-3 rounded-xl bg-mist-50 p-3 text-[12px] leading-snug text-ink-muted">
+            <span className="block font-medium text-ink-soft">2027 KPI scorecard</span>
             Nine categories, weights total 100.
           </div>
         )}
@@ -295,10 +297,10 @@ export default function Layout() {
       {open && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-navy/45 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
-          <aside className="relative flex h-full w-[272px] flex-col bg-navy">
+          <aside className="relative flex h-full w-[272px] flex-col bg-white">
             <div className="flex items-center justify-between px-4 pt-5 pb-5">
               <Wordmark />
-              <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-ice/70 hover:bg-navy-soft" aria-label="Close menu">
+              <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-ink-muted hover:bg-mist-100" aria-label="Close menu">
                 <X className="size-5" />
               </button>
             </div>
@@ -330,9 +332,15 @@ export default function Layout() {
                   Local preview data
                 </span>
               )}
+              {path !== "/scorecard" && <MonthNav className="hidden sm:flex" />}
               <LiveClock />
               <AccountMenu email={email} role={DEV_SNAPSHOT ? "owner" : (role ?? "")} onSignOut={() => void signOut()} />
             </div>
+            {path !== "/scorecard" && (
+              <div className="flex justify-center border-t border-mist-200/70 px-4 py-2 sm:hidden">
+                <MonthNav />
+              </div>
+            )}
           </header>
           <main className="relative min-h-0 flex-1 bg-white lg:overflow-y-auto">
             <div className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-[calc(var(--mobile-nav-space)+1.5rem)] sm:px-6 sm:pt-8 lg:pb-8">
@@ -341,6 +349,8 @@ export default function Layout() {
           </main>
         </div>
       </div>
+
+      <Drilldown />
 
       {/* Phone nav pill: the three places you go most, and More for the rest. */}
       <div className="fixed inset-x-0 bottom-0 z-40 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden">
@@ -355,7 +365,7 @@ export default function Layout() {
             return (
               <Link
                 key={to}
-                to={to}
+                to={to === "/scorecard" ? to : withMonth(to)}
                 aria-current={on ? "page" : undefined}
                 className={cn(
                   "relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full py-1.5 text-[11px] font-medium transition-colors",
@@ -363,7 +373,7 @@ export default function Layout() {
                 )}
               >
                 <t.icon className="size-[22px]" strokeWidth={on ? 2.2 : 1.8} />
-                <span className="max-w-full truncate px-1">{to === "/" ? "Board" : to === "/entry" ? "Enter" : t.label}</span>
+                <span className="max-w-full truncate px-1">{to === "/" ? "Board" : to === "/entry" ? "Record" : t.label}</span>
               </Link>
             );
           })}

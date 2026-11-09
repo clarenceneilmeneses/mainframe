@@ -1,6 +1,6 @@
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { Status } from "../lib/scoring";
-import { compactMoney, money } from "../lib/format";
+import type { Status, Unit } from "../lib/scoring";
+import { compactMoney, money, unitValue } from "../lib/format";
 import { cn } from "../lib/utils";
 
 // Malaya's single-hue rule: one series, one blue. Status is the only other
@@ -168,5 +168,104 @@ export function AmountVsTarget({
         </BarChart>
       </ResponsiveContainer>
     </div>
+  );
+}
+
+/** A tiny bar per month for a table row. Empty months leave a gap; the last bar is the month in view. */
+export function Sparkbars({ values, className }: { values: (number | null)[]; className?: string }) {
+  const max = 100;
+  return (
+    <div className={cn("flex h-7 items-end gap-[3px]", className)} aria-hidden>
+      {values.map((v, i) => (
+        <span
+          key={i}
+          className={cn("w-[5px] rounded-t-[2px]", v == null ? "h-[3px] bg-mist-200" : i === values.length - 1 ? "bg-brand-700" : "bg-brand-300")}
+          style={v == null ? undefined : { height: `${Math.max(8, (Math.min(v, max) / max) * 100)}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function niceCeil(v: number) {
+  const mag = 10 ** Math.floor(Math.log10(v));
+  const step = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((m) => m * mag >= v) ?? 10;
+  return step * mag;
+}
+
+const axisFor = (unit: Unit) => (v: number) => (unit === "php" ? compactMoney(v) : unitValue(v, unit));
+
+/** One measure by month with its target, for a drill-down: bars for results, a dashed line for the target. */
+export function MeasureTrend({
+  data,
+  unit,
+  band,
+  direction,
+}: {
+  data: { label: string; value: number | null; target: number | null }[];
+  unit: Unit;
+  band?: number | null;
+  direction: "higher" | "lower" | "band";
+}) {
+  const target = [...data].reverse().find((d) => d.target != null)?.target ?? null;
+  const values = data.map((d) => d.value ?? 0);
+  const rawHi = Math.max(...values, direction === "band" ? Math.abs(band ?? 0) * 1.5 : (target ?? 0) * 1.1, 1);
+  // Round the top of the axis to a number people read easily: 100% for shares, else a round step × 10ⁿ.
+  const hi = unit === "pct" && direction !== "band" ? Math.max(100, Math.ceil(rawHi / 10) * 10) : niceCeil(rawHi);
+  const lo = Math.min(...values, direction === "band" ? -Math.abs(band ?? 0) * 1.5 : 0);
+  return (
+    <div className="h-44">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }} barCategoryGap="28%">
+          <CartesianGrid vertical={false} stroke="#e8eaee" />
+          <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={{ stroke: "#d9dce2" }} interval={0} />
+          <YAxis tick={axis} tickLine={false} axisLine={false} width={52} domain={[lo, hi]} tickFormatter={axisFor(unit)} />
+          {direction === "band" ? (
+            <>
+              <ReferenceLine y={Math.abs(band ?? 0)} stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="6 4" />
+              <ReferenceLine y={-Math.abs(band ?? 0)} stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="6 4" />
+            </>
+          ) : (
+            target != null && <ReferenceLine y={target} stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="6 4" />
+          )}
+          <Tooltip
+            cursor={{ fill: "rgba(29,91,164,0.06)" }}
+            content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null;
+              const p = (payload[0] as TipPayload).payload as { value: number | null; target: number | null };
+              const rows: [string, string][] = [["Result", p.value == null ? "Not recorded" : unitValue(p.value, unit, { full: true })]];
+              if (direction !== "band" && p.target != null) rows.push(["Target", unitValue(p.target, unit, { full: true })]);
+              return <TipBox title={String(label)} rows={rows} />;
+            }}
+          />
+          <Bar dataKey="value" fill={BLUE} radius={[4, 4, 0, 0]} maxBarSize={26} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** Horizontal bars for a breakdown (e.g. sales by category). Values in the measure's unit. */
+export function BreakdownBars({ rows, unit }: { rows: { label: string; value: number }[]; unit: Unit }) {
+  const max = Math.max(...rows.map((r) => Math.abs(r.value)), 0);
+  const total = unit === "php" ? rows.reduce((s, r) => s + r.value, 0) : 0;
+  if (!rows.length) return <p className="py-3 text-sm text-ink-muted">Nothing to break down this month.</p>;
+  return (
+    <ul className="space-y-2.5">
+      {rows.map((r) => (
+        <li key={r.label} title={`${r.label}: ${unitValue(r.value, unit, { full: true })}`}>
+          <div className="mb-1 flex justify-between gap-3 text-[13px]">
+            <span className="min-w-0 truncate text-ink-soft capitalize">{r.label.toLowerCase()}</span>
+            <span className="shrink-0 tabular-nums text-ink">
+              {unitValue(r.value, unit)}
+              {total > 0 && <span className="ml-1.5 text-xs text-ink-muted">{Math.round((r.value / total) * 100)}%</span>}
+            </span>
+          </div>
+          <div className="h-1.5 rounded-full bg-mist-100">
+            <div className="h-1.5 rounded-full" style={{ width: `${max ? (Math.abs(r.value) / max) * 100 : 0}%`, background: BLUE }} />
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -135,11 +135,22 @@ async function liveRows(table, select) {
 const n = (v) => (v == null || v === "" ? 0 : Number(v));
 const monthOf = (d) => (d ? `${String(d).slice(0, 7)}-01` : null);
 const round = (v, d = 2) => Number(v.toFixed(d));
+const clean = (v, fallback) => (v == null || String(v).trim() === "" ? fallback : String(v).trim().replace(/s+/g, " "));
+const add = (map, key, v) => map.set(key, (map.get(key) ?? 0) + v);
+/** Largest entries first; the rest folded into "Everything else" when asked. */
+function top(map, k, other = true) {
+  const rows = [...map].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const out = rows.slice(0, k).map(([label, value]) => ({ label, value: round(value) }));
+  const rest = rows.slice(k).reduce((a, [, v]) => a + v, 0);
+  if (other && rest > 0) out.push({ label: "Everything else", value: round(rest) });
+  return out;
+}
 
 export function monthlyFigures(sales, quotes, salesTarget) {
   const months = new Map();
   const get = (k) => {
-    if (!months.has(k)) months.set(k, { sales: 0, income: 0, rows: 0, due: 0, collected: 0, dueRows: 0 });
+    if (!months.has(k))
+      months.set(k, { sales: 0, income: 0, rows: 0, due: 0, collected: 0, dueRows: 0, cat: new Map(), client: new Map(), unpaid: new Map() });
     return months.get(k);
   };
   for (const s of sales) {
@@ -149,6 +160,12 @@ export function monthlyFigures(sales, quotes, salesTarget) {
     m.sales += n(s.total_nam_amount);
     m.income += n(s.income);
     m.rows++;
+    const cat = clean(s.category, "Uncategorised");
+    const c = m.cat.get(cat) ?? { sales: 0, income: 0 };
+    c.sales += n(s.total_nam_amount);
+    c.income += n(s.income);
+    m.cat.set(cat, c);
+    add(m.client, clean(s.company, "No client name"), n(s.total_nam_amount));
   }
   for (const s of sales) {
     if (!s.date_delivered || !s.due_date) continue;
@@ -159,6 +176,7 @@ export function monthlyFigures(sales, quotes, salesTarget) {
     m.due += amt;
     m.dueRows++;
     if (s.payment_status === "Paid") m.collected += amt;
+    else add(m.unpaid, clean(s.company, "No client name"), amt);
   }
 
   const figures = [];
@@ -170,22 +188,44 @@ export function monthlyFigures(sales, quotes, salesTarget) {
     let pipe = 0;
     let pipeRows = 0;
     let quotesInSystem = false;
+    const pipeBy = new Map();
     for (const q of quotes) {
       const d = new Date(`${String(q.date).slice(0, 10)}T00:00:00Z`);
       if (d < end) quotesInSystem = true;
       if (d >= start && d < end && q.status === "Pending") {
         pipe += n(q.total_amount);
         pipeRows++;
+        add(pipeBy, clean(q.company, "No client name"), n(q.total_amount));
       }
     }
 
-    figures.push({ period, measure_code: "sales_vs_target", actual: round(m.sales), detail: { sales_rows: m.rows } });
+    figures.push({ period, measure_code: "sales_vs_target", actual: round(m.sales), detail: {
+        sales_rows: m.rows,
+        breakdowns: [
+          { title: "Sales by product category", unit: "php", rows: top(new Map([...m.cat].map(([k, v]) => [k, v.sales])), 6) },
+          { title: "Biggest clients this month", unit: "php", rows: top(m.client, 5, false) },
+        ],
+      } });
     if (m.sales > 0) {
       figures.push({
         period,
         measure_code: "gross_margin",
         actual: round((m.income / m.sales) * 100),
-        detail: { income: round(m.income), sales: round(m.sales) },
+        detail: {
+          income: round(m.income),
+          sales: round(m.sales),
+          breakdowns: [
+            {
+              title: "Margin by product category (biggest sellers)",
+              unit: "pct",
+              rows: [...m.cat]
+                .filter(([, v]) => v.sales > 0)
+                .sort((a, b) => b[1].sales - a[1].sales)
+                .slice(0, 6)
+                .map(([label, v]) => ({ label, value: round((v.income / v.sales) * 100) })),
+            },
+          ],
+        },
       });
     }
     // Before the quotations module existed there is no pipeline to measure.
@@ -194,7 +234,13 @@ export function monthlyFigures(sales, quotes, salesTarget) {
         period,
         measure_code: "pipeline_cover",
         actual: round(pipe / salesTarget),
-        detail: { open_quotes_value: round(pipe), quote_lines: pipeRows, window_days: PIPELINE_WINDOW_DAYS, sales_target: salesTarget },
+        detail: {
+          open_quotes_value: round(pipe),
+          quote_lines: pipeRows,
+          window_days: PIPELINE_WINDOW_DAYS,
+          sales_target: salesTarget,
+          breakdowns: [{ title: "Open quotes by client", unit: "php", rows: top(pipeBy, 5, false) }],
+        },
       });
     }
     if (m.due > 0) {
@@ -202,7 +248,12 @@ export function monthlyFigures(sales, quotes, salesTarget) {
         period,
         measure_code: "collections",
         actual: round((m.collected / m.due) * 100),
-        detail: { amount_due: round(m.due), collected: round(m.collected), lines_due: m.dueRows },
+        detail: {
+          amount_due: round(m.due),
+          collected: round(m.collected),
+          lines_due: m.dueRows,
+          breakdowns: [{ title: "Still unpaid, by client", unit: "php", rows: top(m.unpaid, 5, false) }],
+        },
       });
     }
   }
@@ -262,8 +313,8 @@ async function main() {
     quotes = dumpRows(src, "quotations");
     origin = `dump ${path.basename(dump)}`;
   } else if (flag("--live")) {
-    sales = await liveRows("sales", "id,date,total_nam_amount,income,date_delivered,due_date,payment_status,total_amount_due");
-    quotes = await liveRows("quotations", "id,date,total_amount,status");
+    sales = await liveRows("sales", "id,date,company,category,total_nam_amount,income,date_delivered,due_date,payment_status,total_amount_due");
+    quotes = await liveRows("quotations", "id,date,company,total_amount,status");
     origin = "NAM Supply live database";
   } else {
     console.error("Say where from: --dump <file.sql> or --live");

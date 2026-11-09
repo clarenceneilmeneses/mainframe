@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { BOARD_KEY, DEV_SNAPSHOT, type BoardData } from "../lib/board";
-import { STATUS_CUTS, type MeasureDef } from "../lib/scoring";
+import type { MeasureDef } from "../lib/scoring";
 import { errorMessage, supabase } from "../lib/supabase";
 import { unitValue } from "../lib/format";
 import { useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
-import { Button, Card, CardHeader, Input, PageHeader, StatusBadge } from "../components/ui";
+import { Button, Card, CardHeader, Input, PageHeader } from "../components/ui";
+import { HowItScores } from "../components/HowItScores";
 import { BoardGate } from "../components/board-bits";
 
 const RULE: Record<MeasureDef["direction"], string> = {
@@ -20,46 +21,19 @@ export default function Scorecard() {
   return (
     <>
       <PageHeader
-        eyebrow="Data"
-        title="Scorecard"
-        description="The 2027 KPI scorecard, how the board turns results into a score, and each business's targets."
+        eyebrow="Manage"
+        title="Targets"
+        description="What each business is aiming for. Change a target here and every score that uses it updates."
       />
       <BoardGate>
         {(d) => (
           <div className="space-y-6">
-            <HowItScores />
             <Targets data={d} />
+            <HowItScores />
           </div>
         )}
       </BoardGate>
     </>
-  );
-}
-
-function HowItScores() {
-  const steps = [
-    ["Each measure", "earns 0–100% of its target. Beating a target caps at 100%, so one strong number can't hide a weak one."],
-    ["Each category", "averages its measures that have a result, and earns that share of its weight. Sales at 30% weight and 75% of target earns 22.5 points."],
-    ["Each business", "adds its points over the weight of the categories that reported, out of 100. Missing results show as gaps and lower the coverage figure — they aren't scored as zero."],
-  ];
-  return (
-    <Card>
-      <CardHeader title="How the score is worked out" description="The same rule for every business, every month." />
-      <ol className="grid grid-cols-1 gap-px bg-mist-200 md:grid-cols-3">
-        {steps.map(([title, body], i) => (
-          <li key={title} className="bg-white px-5 py-4">
-            <span className="grid size-7 place-items-center rounded-full bg-brand-50 text-sm font-semibold text-brand-700">{i + 1}</span>
-            <p className="mt-2 text-sm font-medium text-ink">{title}</p>
-            <p className="mt-1 text-[13px] leading-relaxed text-ink-muted">{body}</p>
-          </li>
-        ))}
-      </ol>
-      <div className="flex flex-wrap items-center gap-2 border-t border-mist-200 px-5 py-3 text-xs text-ink-muted">
-        <StatusBadge status="on" label={`On target · ${STATUS_CUTS.on}+`} />
-        <StatusBadge status="watch" label={`Watch · ${STATUS_CUTS.watch}–${STATUS_CUTS.on - 1}`} />
-        <StatusBadge status="off" label={`Off target · under ${STATUS_CUTS.watch}`} />
-      </div>
-    </Card>
   );
 }
 
