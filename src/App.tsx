@@ -4,6 +4,7 @@ import Board from "./pages/Board";
 import CompanyPage from "./pages/CompanyPage";
 import Entry from "./pages/Entry";
 import Scorecard from "./pages/Scorecard";
+import Guide from "./pages/Guide";
 import Login from "./pages/Login";
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="c/:slug" element={<CompanyPage />} />
         <Route path="entry" element={<Entry />} />
         <Route path="scorecard" element={<Scorecard />} />
+        <Route path="guide" element={<Guide />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

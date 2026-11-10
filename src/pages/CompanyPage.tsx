@@ -5,7 +5,9 @@ import { ClipboardPen, RefreshCw, SearchX } from "lucide-react";
 import {
   companyScore,
   DEV_SNAPSHOT,
+  headlineMeasure,
   lastSync,
+  scorecardName,
   trendMonths,
   useBoard,
   useCompanyTrend,
@@ -13,7 +15,7 @@ import {
   type Company,
   type Range,
 } from "../lib/board";
-import { statusOf, type CategoryResult, type CompanyScore, type MeasureResult } from "../lib/scoring";
+import { statusOf, targetFor, type CategoryResult, type CompanyScore, type MeasureResult } from "../lib/scoring";
 import { prettyDateTime, unitValue } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
@@ -75,20 +77,21 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
   const { setRange } = useRange();
   const pickMonth = (p: string) => setRange({ from: p, to: p });
 
-  // Sales against the monthly target, where the business reports sales.
+  // The scorecard's main peso measure (sales, or ALM's revenue) month by month against its target.
   const sales = useMemo(() => {
-    const def = data.measures.find((m) => m.code === "sales_vs_target");
-    const cm = data.companyMeasures.find((x) => x.company_id === company.id && x.measure_code === "sales_vs_target");
+    const def = headlineMeasure(data, company.id);
+    if (!def) return { def, pts: [], target: null, any: false };
+    const cm = data.companyMeasures.find((x) => x.company_id === company.id && x.measure_code === def.code);
     const pts = trendMonths(range).map((p) => {
-      const row = data.actuals.find((a) => a.company_id === company.id && a.measure_code === "sales_vs_target" && a.period === p);
+      const row = data.actuals.find((a) => a.company_id === company.id && a.measure_code === def.code && a.period === p) ?? null;
       return {
         period: p,
         label: format(parseISO(p), "MMM"),
         value: row ? Number(row.actual) : null,
-        target: row?.target ?? cm?.target ?? def?.default_target ?? null,
+        target: targetFor(def, cm, row, p),
       };
     });
-    return { pts, target: cm?.target ?? def?.default_target ?? null, any: pts.some((p) => p.value != null) };
+    return { def, pts, target: targetFor(def, cm, null, range.to), any: pts.some((p) => p.value != null) };
   }, [data, company.id, range.from, range.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -128,7 +131,7 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
 
       <Card>
         <CardHeader
-          title={`${company.name} — 2027 KPI scorecard`}
+          title={`${company.name} — ${scorecardName(data, company.id)}`}
           description={`Results for ${rangeNoun(range)}. Weight is what a category can earn; Earned is what it did. Click a category to see the numbers underneath.`}
           action={
             company.data_source ? (
@@ -169,9 +172,12 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
       <div className={cn("grid grid-cols-1 gap-6", !sales.any && "hidden")}>
         {sales.any && (
           <Card>
-            <CardHeader title="Sales vs monthly target" description="Booked sales per month. The dashed line is the target. Click a month to look at just that month." />
+            <CardHeader
+              title={sales.def?.name ?? "Sales vs monthly target"}
+              description="Per month. The dashed line is the target. Click a month to look at just that month."
+            />
             <div className="px-3 pt-4 pb-3">
-              <AmountVsTarget data={sales.pts} target={sales.target} name="Sales" onPick={pickMonth} />
+              <AmountVsTarget data={sales.pts} target={sales.target} name={sales.def?.name.replace(/ vs .*$/, "") ?? "Sales"} onPick={pickMonth} />
             </div>
           </Card>
         )}

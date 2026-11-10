@@ -11,15 +11,27 @@
  *     they show as gaps, and coverage says how much of the scorecard is in.
  */
 
-export type Unit = "php" | "pct" | "ratio" | "score5";
+export type Unit = "php" | "pct" | "ratio" | "score5" | "count";
 export type Direction = "higher" | "lower" | "band";
 export type Status = "on" | "watch" | "off" | "none";
 
 /** A score at or above `on` is on target; at or above `watch` needs watching; below is off target. */
 export const STATUS_CUTS = { on: 95, watch: 85 } as const;
 
+/** One business's scorecard. Each business is judged on its own (supabase/03_scorecards.sql). */
+export interface ScorecardDef {
+  code: string;
+  name: string;
+  description: string | null;
+  sort: number;
+}
+
 export interface CategoryDef {
   code: string;
+  /** Which scorecard it belongs to. Missing on a database from before 03_scorecards.sql: then it is on every one. */
+  scorecard_code?: string | null;
+  /** Short label for the board's grid. */
+  short_name?: string | null;
   name: string;
   weight: number;
   target_text: string;
@@ -43,6 +55,8 @@ export interface CompanyMeasure {
   measure_code: string;
   applicable: boolean;
   target: number | null;
+  /** A monthly target per quarter, {Q1, Q2, Q3, Q4}; overrides `target` when set. */
+  quarter_targets?: number[] | null;
   source: "manual" | "system";
 }
 
@@ -105,7 +119,10 @@ export function attainment(
     if (dev <= b) return 1;
     return b > 0 ? clamp(1 - (dev - b) / b) : 0;
   }
-  if (target == null || !Number.isFinite(target) || target <= 0) return null;
+  if (target == null || !Number.isFinite(target)) return null;
+  // "Zero accidents": with a target of zero, any at all is a miss.
+  if (direction === "lower" && target === 0) return actual <= 0 ? 1 : 0;
+  if (target <= 0) return null;
   if (direction === "lower") return actual <= target ? 1 : clamp(target / actual);
   return clamp(actual / target);
 }
@@ -117,8 +134,70 @@ export function statusOf(score: number | null): Status {
   return "off";
 }
 
-export function targetFor(def: MeasureDef, cm: CompanyMeasure | undefined, row: Actual | null) {
-  return row?.target ?? cm?.target ?? def.default_target;
+export interface Drag {
+  category: CategoryResult;
+  measure: MeasureResult;
+  /** Points the business's score would gain if this measure were at full marks. */
+  lost: number;
+}
+
+/**
+ * What is pulling a score down, biggest first. A measure's cost is its share
+ * of its category's weight, on the same scale as the score — so the costs of
+ * every measure add up to exactly 100 − score. This is why a small miss in
+ * Sales (weight 30) can matter more than a big miss in HR (weight 4).
+ */
+export function drags(s: CompanyScore): Drag[] {
+  const reported = s.categories.filter((c) => c.applicable && c.points != null);
+  const reportedWeight = reported.reduce((a, c) => a + Number(c.def.weight), 0);
+  if (reportedWeight <= 0) return [];
+  return reported
+    .flatMap((category) => {
+      const scored = category.measures.filter((m) => m.attainment != null);
+      return scored
+        .filter((m) => (m.attainment ?? 1) < 1)
+        .map((measure) => ({
+          category,
+          measure,
+          lost: ((Number(category.def.weight) * (1 - (measure.attainment ?? 1))) / scored.length / reportedWeight) * 100,
+        }));
+    })
+    .sort((a, b) => b.lost - a.lost);
+}
+
+/** The monthly target set for the quarter a month falls in, if the target differs by quarter. */
+export function quarterTarget(cm: CompanyMeasure | undefined, period: string | null | undefined): number | null {
+  const q = cm?.quarter_targets;
+  if (!q || q.length !== 4 || !period) return null;
+  const month = Number(period.slice(5, 7));
+  if (!(month >= 1 && month <= 12)) return null;
+  const t = q[Math.floor((month - 1) / 3)];
+  return t == null || !Number.isFinite(Number(t)) ? null : Number(t);
+}
+
+/**
+ * The target a result is judged against: one typed in with that month's result,
+ * else the business's target for that quarter, else its standing target, else
+ * the scorecard default.
+ */
+export function targetFor(def: MeasureDef, cm: CompanyMeasure | undefined, row: Actual | null, period?: string | null) {
+  return row?.target ?? quarterTarget(cm, period ?? row?.period) ?? cm?.target ?? def.default_target;
+}
+
+/**
+ * The categories and measures a business is judged on: those of its own
+ * scorecard. Categories with no scorecard (a database from before
+ * 03_scorecards.sql) count for everyone, so the board keeps working until
+ * the SQL is run.
+ */
+export function pickScorecard<C extends CategoryDef, M extends MeasureDef>(
+  scorecardCode: string | null | undefined,
+  categories: C[],
+  measures: M[],
+): { categories: C[]; measures: M[] } {
+  const cats = categories.filter((c) => c.scorecard_code == null || c.scorecard_code === scorecardCode);
+  const codes = new Set(cats.map((c) => c.code));
+  return { categories: cats, measures: measures.filter((m) => codes.has(m.category_code)) };
 }
 
 export function scoreCompany(input: {
@@ -126,6 +205,8 @@ export function scoreCompany(input: {
   measures: MeasureDef[];
   companyMeasures: CompanyMeasure[];
   actuals: Actual[];
+  /** The month being scored, for targets that differ by quarter when a measure has no result. */
+  period?: string;
 }): CompanyScore {
   const cmBy = new Map(input.companyMeasures.map((c) => [c.measure_code, c]));
   const rowBy = new Map(input.actuals.map((a) => [a.measure_code, a]));
@@ -140,7 +221,7 @@ export function scoreCompany(input: {
           const cm = cmBy.get(m.code);
           const applicable = cm?.applicable ?? true;
           const row = applicable ? (rowBy.get(m.code) ?? null) : null;
-          const target = targetFor(m, cm, row);
+          const target = targetFor(m, cm, row, row?.period ?? input.period);
           const actual = row ? Number(row.actual) : null;
           return {
             def: m,

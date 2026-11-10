@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
+  BookOpen,
   Building2,
   ChevronRight,
   ClipboardPen,
@@ -12,6 +13,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Truck,
+  UsersRound,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -33,7 +35,8 @@ interface Tab {
   icon: LucideIcon;
 }
 
-const COMPANY_ICONS: LucideIcon[] = [Factory, Building2, Truck];
+// Fourth: ALM Management, a manpower business.
+const COMPANY_ICONS: LucideIcon[] = [Factory, Building2, Truck, UsersRound];
 const PILL = ["/", "/entry", "/scorecard"];
 const COLLAPSE_KEY = "mainframe:sidebar-collapsed";
 const GROUPS_KEY = "mainframe:nav-folded";
@@ -62,6 +65,7 @@ function useNav(): { label: string; tabs: Tab[] }[] {
         { to: "/scorecard", label: "Targets", icon: Target },
       ],
     },
+    { label: "Help", tabs: [{ to: "/guide", label: "How it works", icon: BookOpen }] },
   ];
 }
 
@@ -271,8 +275,8 @@ export default function Layout() {
         <NavList collapsed={collapsed} />
         {!collapsed && (
           <div className="mx-3 mb-3 rounded-xl bg-mist-50 p-3 text-[12px] leading-snug text-ink-muted">
-            <span className="block font-medium text-ink-soft">2027 KPI scorecard</span>
-            Nine categories, weights total 100.
+            <span className="block font-medium text-ink-soft">KPI scorecards</span>
+            Each business on its own; weights total 100 on each.
           </div>
         )}
       </aside>

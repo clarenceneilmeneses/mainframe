@@ -1,8 +1,9 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight, ClipboardPen, RefreshCw } from "lucide-react";
-import { companyScore, DEV_SNAPSHOT, measureSeries, previousRange, useBoard, type BoardData, type Range } from "../lib/board";
+import { companyScore, DEV_SNAPSHOT, measureSeries, previousRange, scorecardFor, useBoard, type BoardData, type Range } from "../lib/board";
 import { statusOf, type MeasureResult } from "../lib/scoring";
 import { money, unitValue } from "../lib/format";
+import { countsOf, FORMULAS } from "../lib/formulas";
 import { canEdit, useAuth } from "../lib/auth";
 import { Sheet, StatusBadge } from "./ui";
 import { rangeLabel, rangeNoun, useRange } from "./board-bits";
@@ -41,7 +42,8 @@ export function Drilldown() {
   const drill = useDrill();
   const { range } = useRange();
   const company = data?.companies.find((c) => c.slug === drill.slug);
-  const cat = data?.categories.find((c) => c.code === drill.category);
+  // Only a category on this business's own scorecard; a link to another one opens nothing.
+  const cat = data && company ? scorecardFor(data, company.id).categories.find((c) => c.code === drill.category) : undefined;
   // "~score" opens the business's score itself: where its points came from.
   const scoreView = drill.category === "score";
   const open = Boolean(data && company && (cat || scoreView));
@@ -114,20 +116,29 @@ function howWorkedOut(mr: MeasureResult): string | null {
     case "sales_vs_target":
       return d.sales_rows != null ? `Total of ${d.sales_rows.toLocaleString("en-PH")} sales lines${d.months_reported > 1 ? ` across ${d.months_reported} months` : " dated this month"}.` : null;
     case "gross_margin":
-      return d.income != null ? `${money(d.income)} gross profit on ${money(d.sales)} of sales.` : null;
+      return d.income != null ? `${money(d.income)} gross profit on ${money(d.sales)} of sales.` : countsLine(mr, d);
     case "pipeline_cover":
       return d.open_quotes_value != null
         ? d.months_reported > 1
           ? `Average of the ${d.months_reported} month-end readings: quotes still pending from the 60 days before each month end ÷ the monthly target.`
           : `${money(d.open_quotes_value)} in quotes still pending (${d.quote_lines} lines from the last ${d.window_days} days) ÷ the ${money(d.sales_target)} monthly target.`
-        : null;
+        : countsLine(mr, d);
     case "collections":
       return d.amount_due != null
         ? `${money(d.collected)} collected of the ${money(d.amount_due)} that fell due${d.months_reported > 1 ? " in the period" : " this month"} (${d.lines_due.toLocaleString("en-PH")} delivered lines).`
-        : null;
+        : countsLine(mr, d);
     default:
-      return null;
+      return countsLine(mr, d);
   }
+}
+
+/** A result typed in as two counts: say the counts. */
+function countsLine(mr: MeasureResult, d: Record<string, number>): string | null {
+  const f = FORMULAS[mr.def.code];
+  const counts = countsOf(d);
+  if (!f || !counts) return null;
+  const show = (n: number) => (f.money ? money(n) : n.toLocaleString("en-PH"));
+  return `${f.top}: ${show(counts.num)} · ${f.bottom}: ${show(counts.den)}${d.months_reported > 1 ? `, added up over ${d.months_reported} months` : ""}.`;
 }
 
 function MeasureBlock({

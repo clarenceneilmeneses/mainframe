@@ -1,4 +1,4 @@
-import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Status, Unit } from "../lib/scoring";
 import { compactMoney, money, unitValue } from "../lib/format";
 import { cn } from "../lib/utils";
@@ -142,6 +142,24 @@ export function ScoreTrend({
   );
 }
 
+/** True when the target changes during the span (₱3M a month in Q1–Q2, ₱4.2M in Q3–Q4). */
+const targetsVary = (data: { target: number | null }[]) => new Set(data.map((d) => d.target).filter((t) => t != null)).size > 1;
+
+/** A target that changes during the year, drawn as steps in place of one flat line. Returned as an element so the chart sees it as its own child. */
+const steppedTarget = () => (
+  <Line
+    dataKey="target"
+    type="step"
+    stroke={BLUE_SOFT}
+    strokeWidth={2}
+    strokeDasharray="6 4"
+    dot={false}
+    activeDot={false}
+    connectNulls
+    isAnimationActive={false}
+  />
+);
+
 /** A peso measure by month against its target line (e.g. sales vs the monthly target). */
 export function AmountVsTarget({
   data,
@@ -154,10 +172,12 @@ export function AmountVsTarget({
   name: string;
   onPick?: (period: string) => void;
 }) {
+  const stepped = targetsVary(data);
+  const top = Math.max(target ?? 0, ...data.map((d) => d.target ?? 0));
   return (
     <div className="h-56">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="30%">
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="30%">
           <CartesianGrid vertical={false} stroke="#e8eaee" />
           <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={{ stroke: "#d9dce2" }} />
           <YAxis
@@ -165,10 +185,10 @@ export function AmountVsTarget({
             tickLine={false}
             axisLine={false}
             width={56}
-            domain={[0, (max: number) => Math.max(max, (target ?? 0) * 1.08)]}
+            domain={[0, (max: number) => Math.max(max, top * 1.08)]}
             tickFormatter={(v: number) => compactMoney(v)}
           />
-          {target != null && (
+          {!stepped && target != null && (
             <ReferenceLine y={target} stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="6 4" />
           )}
           <Tooltip
@@ -193,7 +213,8 @@ export function AmountVsTarget({
               if (onPick && d?.payload?.period) onPick(d.payload.period);
             }}
           />
-        </BarChart>
+          {stepped && steppedTarget()}
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
@@ -238,15 +259,17 @@ export function MeasureTrend({
   direction: "higher" | "lower" | "band";
 }) {
   const target = [...data].reverse().find((d) => d.target != null)?.target ?? null;
+  const stepped = direction !== "band" && targetsVary(data);
   const values = data.map((d) => d.value ?? 0);
-  const rawHi = Math.max(...values, direction === "band" ? Math.abs(band ?? 0) * 1.5 : (target ?? 0) * 1.1, 1);
+  const topTarget = Math.max(target ?? 0, ...data.map((d) => d.target ?? 0));
+  const rawHi = Math.max(...values, direction === "band" ? Math.abs(band ?? 0) * 1.5 : topTarget * 1.1, 1);
   // Round the top of the axis to a number people read easily: 100% for shares, else a round step × 10ⁿ.
   const hi = unit === "pct" && direction !== "band" ? Math.max(100, Math.ceil(rawHi / 10) * 10) : niceCeil(rawHi);
   const lo = Math.min(...values, direction === "band" ? -Math.abs(band ?? 0) * 1.5 : 0);
   return (
     <div className="h-44">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }} barCategoryGap="28%">
+        <ComposedChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }} barCategoryGap="28%">
           <CartesianGrid vertical={false} stroke="#e8eaee" />
           <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={{ stroke: "#d9dce2" }} interval={0} />
           <YAxis tick={axis} tickLine={false} axisLine={false} width={52} domain={[lo, hi]} tickFormatter={axisFor(unit)} />
@@ -256,7 +279,7 @@ export function MeasureTrend({
               <ReferenceLine y={-Math.abs(band ?? 0)} stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="6 4" />
             </>
           ) : (
-            target != null && <ReferenceLine y={target} stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="6 4" />
+            !stepped && target != null && <ReferenceLine y={target} stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="6 4" />
           )}
           <Tooltip
             cursor={{ fill: "rgba(29,91,164,0.06)" }}
@@ -279,7 +302,8 @@ export function MeasureTrend({
               if (onPick && d?.payload?.period) onPick(d.payload.period);
             }}
           />
-        </BarChart>
+          {stepped && steppedTarget()}
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

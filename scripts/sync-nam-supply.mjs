@@ -114,7 +114,13 @@ function readTuples(src, i) {
 async function liveRows(table, select) {
   const url = process.env.NAM_SUPABASE_URL;
   const key = process.env.NAM_SECRET_KEY;
-  if (!url || !key) throw new Error("--live needs NAM_SUPABASE_URL and NAM_SECRET_KEY in .env.local (NAM Supply's project, not Mainframe's).");
+  if (!url || !key) {
+    throw new Error(
+      "--live needs NAM_SUPABASE_URL and NAM_SECRET_KEY in .env.local (NAM Supply's project, not Mainframe's).\n" +
+        "The secret key is in NAM Supply's Supabase dashboard: Project Settings → API Keys → Secret keys.\n" +
+        "Its publishable key won't do: sales and quotations are only readable by signed-in staff.",
+    );
+  }
   const out = [];
   for (let from = 0; ; from += 1000) {
     const res = await fetch(`${url}/rest/v1/${table}?select=${select}&order=id`, {
@@ -135,7 +141,7 @@ async function liveRows(table, select) {
 const n = (v) => (v == null || v === "" ? 0 : Number(v));
 const monthOf = (d) => (d ? `${String(d).slice(0, 7)}-01` : null);
 const round = (v, d = 2) => Number(v.toFixed(d));
-const clean = (v, fallback) => (v == null || String(v).trim() === "" ? fallback : String(v).trim().replace(/s+/g, " "));
+const clean = (v, fallback) => (v == null || String(v).trim() === "" ? fallback : String(v).trim().replace(/\s+/g, " "));
 const add = (map, key, v) => map.set(key, (map.get(key) ?? 0) + v);
 /** Largest entries first; the rest folded into "Everything else" when asked. */
 function top(map, k, other = true) {
@@ -277,27 +283,69 @@ async function mf(pathAndQuery, init = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-/** The scorecard straight out of supabase/setup.sql, for the offline snapshot. */
+/**
+ * The scorecards straight out of supabase/setup.sql and 03_scorecards.sql, for
+ * the offline snapshot: what the database looks like once both have run.
+ */
 function seedFromSetupSql() {
-  const sql = fs.readFileSync(path.join(root, "supabase", "setup.sql"), "utf8");
-  const block = (table) => {
-    const at = sql.indexOf(`insert into public.${table} (`);
-    const cols = sql.slice(sql.indexOf("(", at) + 1, sql.indexOf(")", at)).split(",").map((s) => s.trim());
-    const { tuples } = readTuples(sql, sql.indexOf("values", at) + 6);
-    return tuples.map((v) => Object.fromEntries(cols.map((c, i) => [c, v[i]])));
-  };
+  const files = ["setup.sql", "03_scorecards.sql"]
+    .map((f) => path.join(root, "supabase", f))
+    .filter((f) => fs.existsSync(f))
+    .map((f) => fs.readFileSync(f, "utf8"));
+  // Every `insert into public.<table> (...) values ...` in either file, in order.
+  const block = (table) =>
+    files.flatMap((sql) => {
+      const out = [];
+      const head = `insert into public.${table} (`;
+      for (let at = sql.indexOf(head); at !== -1; at = sql.indexOf(head, at + 1)) {
+        const close = sql.indexOf(")", at);
+        const valuesAt = sql.indexOf("values", close);
+        // Only "insert ... values", not "insert ... select".
+        if (valuesAt === -1 || sql.slice(close + 1, valuesAt).trim() !== "") continue;
+        const cols = sql.slice(sql.indexOf("(", at) + 1, close).split(",").map((c) => c.trim());
+        const { tuples } = readTuples(sql, valuesAt + 6);
+        out.push(...tuples.map((v) => Object.fromEntries(cols.map((c, i) => [c, v[i]]))));
+      }
+      return out;
+    });
   const num = (v) => (v == null ? null : Number(v));
-  const categories = block("kpi_categories").map((r) => ({ ...r, weight: num(r.weight), sort: num(r.sort) }));
+  const scorecards = block("scorecards").map((r) => ({ ...r, sort: num(r.sort) }));
+  // Categories from before 03 are the Builders scorecard, as 03 makes them.
+  const LEGACY_SHORT = { sales: "Sales", finance: "Finance", projects: "Projects", procurement: "Procurement", supply: "Delivery", quality: "Quality", hr: "People", governance: "Governance", customer: "Customers" };
+  const categories = block("kpi_categories").map((r) => ({
+    scorecard_code: "builders",
+    short_name: LEGACY_SHORT[r.code] ?? null,
+    ...r,
+    weight: num(r.weight),
+    sort: num(r.sort),
+  }));
   const measures = block("kpi_measures").map((r) => ({ ...r, default_target: num(r.default_target), band: num(r.band), sort: num(r.sort) }));
-  const companies = block("companies").map((r, i) => ({ id: `local-${i + 1}`, ...r, sort: num(r.sort) }));
+  const ON = { "nam-trading": "trading" }; // what 03's updates do
+  const companies = block("companies").map((r, i) => ({
+    id: `local-${i + 1}`,
+    ...r,
+    scorecard_code: r.scorecard_code ?? ON[r.slug] ?? "builders",
+    sort: num(r.sort),
+  }));
   const system = { sales_vs_target: DEFAULT_SALES_TARGET, gross_margin: 20, pipeline_cover: 3, collections: 95 };
-  const companyMeasures = companies.flatMap((c) =>
-    measures.map((m) => {
-      const sys = c.slug === "nam-supply" && m.code in system;
-      return { company_id: c.id, measure_code: m.code, applicable: true, target: sys ? system[m.code] : null, source: sys ? "system" : "manual" };
-    }),
-  );
-  return { companies, categories, measures, companyMeasures };
+  const companyMeasures = companies.flatMap((c) => {
+    const cats = new Set(categories.filter((k) => k.scorecard_code === c.scorecard_code).map((k) => k.code));
+    return measures
+      .filter((m) => cats.has(m.category_code))
+      .map((m) => {
+        const sys = c.slug === "nam-supply" && m.code in system;
+        const quarters = c.slug === "nam-trading" && m.code === "tr_sales_vs_target" ? [3000000, 3000000, 4200000, 4200000] : null;
+        return {
+          company_id: c.id,
+          measure_code: m.code,
+          applicable: true,
+          target: sys ? system[m.code] : null,
+          quarter_targets: quarters,
+          source: sys ? "system" : "manual",
+        };
+      });
+  });
+  return { scorecards, companies, categories, measures, companyMeasures };
 }
 
 // ---------------------------------------------------------------------------

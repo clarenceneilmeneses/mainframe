@@ -1,40 +1,31 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2, CircleDashed, CircleHelp, ClipboardPen } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2, CircleDashed, CircleHelp, ClipboardPen, Gauge, Hourglass, TrendingDown } from "lucide-react";
+import { format, parseISO } from "date-fns";
 import {
   companyScore,
+  thisMonth,
   DEV_SNAPSHOT,
   groupScore,
   measureCounts,
   previousRange,
+  scorecardFor,
+  shortName,
   trendMonths,
   type BoardData,
   type Company,
   type Range,
 } from "../lib/board";
-import { statusOf, type CategoryResult, type MeasureResult } from "../lib/scoring";
+import { drags, statusOf, type CategoryResult, type Drag, type MeasureResult } from "../lib/scoring";
 import { unitValue } from "../lib/format";
 import { canEdit, useAuth } from "../lib/auth";
 import { cn } from "../lib/utils";
 import { Button, Card, CardHeader, Modal, PageHeader, StatTile, StatusBadge, Tabs } from "../components/ui";
-import { BoardGate, rangeNoun, useRange, useWithPeriod } from "../components/board-bits";
+import { BoardGate, rangeLabel, rangeNoun, useRange, useWithPeriod } from "../components/board-bits";
 import { useDrill } from "../components/Drilldown";
 import { HowItScoresSteps } from "../components/HowItScores";
 import { ScoreRing, Sparkbars } from "../components/viz";
 import { companyIcon } from "../components/Layout";
-
-/** Short column heads for the matrix; the full names are in the tooltip and the drill-down. */
-export const SHORT: Record<string, string> = {
-  sales: "Sales",
-  finance: "Finance",
-  projects: "Projects",
-  procurement: "Procurement",
-  supply: "Delivery",
-  quality: "Quality",
-  hr: "People",
-  governance: "Governance",
-  customer: "Customers",
-};
 
 const tint = {
   on: "bg-good-50 hover:ring-good/40",
@@ -60,7 +51,7 @@ export default function Board() {
   return (
     <>
       <PageHeader
-        eyebrow="2027 KPI scorecard"
+        eyebrow="KPI scorecards"
         title="KPI board"
         description={`${label}${months > 1 ? ` (${months} months)` : ""} · how each business is tracking against its targets.`}
         actions={
@@ -79,8 +70,19 @@ export default function Board() {
           </>
         }
       />
-      <BoardGate>{(d) => <Body data={d} range={range} />}</BoardGate>
-      <Modal open={howOpen} onClose={() => setHowOpen(false)} title="How the score is worked out" description="The same rule for every business, every month." size="lg">
+      <BoardGate>{(d) => <Body data={d} range={range} editable={editable} />}</BoardGate>
+      <Modal
+        open={howOpen}
+        onClose={() => setHowOpen(false)}
+        title="How the score is worked out"
+        description="The same rule for every business, every month."
+        size="lg"
+        footer={
+          <Link to="/guide" className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:underline">
+            See it worked out with the real numbers <ArrowRight className="size-4" />
+          </Link>
+        }
+      >
         <div className="-mx-6 -my-5 overflow-hidden">
           <HowItScoresSteps />
         </div>
@@ -89,7 +91,7 @@ export default function Board() {
   );
 }
 
-function Body({ data, range }: { data: BoardData; range: Range }) {
+function Body({ data, range, editable }: { data: BoardData; range: Range; editable: boolean }) {
   const prevR = previousRange(range);
   const scores = data.companies.map((c) => ({ company: c, s: companyScore(data, c.id, range), prev: companyScore(data, c.id, prevR) }));
   const group = groupScore(data, range);
@@ -155,13 +157,15 @@ function Body({ data, range }: { data: BoardData; range: Range }) {
       </div>
       <ListModal kind={list} onClose={() => setList(null)} rows={scores} range={range} vs={vs} />
 
+      <InShort rows={scores} range={range} group={group} groupPrev={groupPrev} vs={vs} missing={counts.missing} total={total} editable={editable} />
+
       <Card className="overflow-hidden">
         <CardHeader
           title="Every business, every category"
           description={
             view === "pct"
-              ? "How close each category came to its target. Click a cell to see the numbers underneath."
-              : "Points earned against each category's weight — the weights add up to 100. Click a cell to see the numbers underneath."
+              ? "Each business on its own scorecard: how close each category came to its target. Click a cell to see the numbers underneath."
+              : "Points earned against each category's weight — every scorecard's weights add up to 100. Click a cell to see the numbers underneath."
           }
           action={
             <Tabs
@@ -276,7 +280,7 @@ function ListModal({ kind, onClose, rows, range, vs }: { kind: ListKind | null; 
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-ink">{x.def.name}</span>
                 <span className="block truncate text-xs text-ink-muted">
-                  {company.name} · {SHORT[cat.def.code] ?? cat.def.name} · {valueVsTarget(x)}
+                  {company.name} · {shortName(cat.def)} · {valueVsTarget(x)}
                 </span>
               </span>
               <StatusBadge status={statusOf((x.attainment ?? 0) * 100)} label={`${Math.round((x.attainment ?? 0) * 100)}%`} />
@@ -394,64 +398,56 @@ function ScoreBlock({ s, prev, data, company, range }: { s: Row["s"]; prev: Row[
 function Matrix({ data, rows, range, view }: { data: BoardData; rows: Row[]; range: Range; view: View }) {
   const drill = useDrill();
   const withPeriod = useWithPeriod();
-  const cats = [...data.categories].sort((a, b) => a.sort - b.sort);
+  // Cells keep one width across the rows: as many columns as the longest scorecard.
+  const cols = Math.max(1, ...rows.map((r) => r.s.categories.length));
 
   return (
     <>
-      {/* Laptop: businesses down, categories across. */}
-      <div className="hidden overflow-x-clip lg:block">
-        <table className="w-full table-fixed text-sm">
-          <colgroup>
-            <col className="w-[210px]" />
-            <col className="w-[132px]" />
-            {cats.map((c) => (
-              <col key={c.code} />
-            ))}
-          </colgroup>
-          <thead>
-            <tr className="text-[11px] text-ink-muted">
-              <th className="px-5 pt-3 pb-2 text-left font-semibold tracking-[0.12em] uppercase">Business</th>
-              <th className="px-2 pt-3 pb-2 text-left font-semibold tracking-[0.12em] uppercase">Score</th>
-              {cats.map((c) => (
-                <th key={c.code} className="px-1 pt-3 pb-2 text-center font-medium" title={c.name}>
-                  <span className="block truncate text-[12px] text-ink-soft">{SHORT[c.code] ?? c.name}</span>
-                  <span className="tabular-nums">weight {Number(c.weight)}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ company, s, prev }) => {
-              const Icon = companyIcon(data.companies, company.id);
-              return (
-                <tr key={company.id} className="border-t border-mist-200">
-                  <td className="px-5 py-3">
-                    <Link to={withPeriod(`/c/${company.slug}`)} className="group flex items-center gap-2.5">
-                      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-brand-50 text-brand-700">
-                        <Icon className="size-4" />
+      {/* Laptop: one row per business, its own scorecard's categories across. */}
+      <div className="hidden lg:block">
+        <div className="grid grid-cols-[210px_132px_1fr] border-b border-mist-200 text-[11px] text-ink-muted">
+          <span className="px-5 pt-3 pb-2 font-semibold tracking-[0.12em] uppercase">Business</span>
+          <span className="px-2 pt-3 pb-2 font-semibold tracking-[0.12em] uppercase">Score</span>
+          <span className="px-1 pt-3 pb-2 font-semibold tracking-[0.12em] uppercase">Its scorecard, category by category</span>
+        </div>
+        <ul className="divide-y divide-mist-200">
+          {rows.map(({ company, s, prev }) => {
+            const Icon = companyIcon(data.companies, company.id);
+            return (
+              <li key={company.id} className="grid grid-cols-[210px_132px_1fr] items-center">
+                <div className="px-5 py-3">
+                  <Link to={withPeriod(`/c/${company.slug}`)} className="group flex items-center gap-2.5">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-brand-50 text-brand-700">
+                      <Icon className="size-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-ink group-hover:text-brand-700 group-hover:underline">{company.name}</span>
+                      <span className="block truncate text-xs text-ink-muted" title={scorecardFor(data, company.id).scorecard?.name}>
+                        {s.score == null ? "Nothing reported" : `${Math.round(s.coverage)}% reported`}
                       </span>
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium text-ink group-hover:text-brand-700 group-hover:underline">{company.name}</span>
-                        <span className="block text-xs text-ink-muted">{s.score == null ? "Nothing reported" : `${Math.round(s.coverage)}% reported`}</span>
-                      </span>
-                    </Link>
-                  </td>
-                  <td className="px-2 py-3">
-                    <ScoreBlock s={s} prev={prev} data={data} company={company} range={range} />
-                  </td>
+                    </span>
+                  </Link>
+                </div>
+                <div className="px-2 py-3">
+                  <ScoreBlock s={s} prev={prev} data={data} company={company} range={range} />
+                </div>
+                <div className="grid gap-1.5 py-2.5 pr-4 pl-1" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
                   {s.categories.map((c) => (
-                    <td key={c.def.code} className="px-1 py-2">
+                    <div key={c.def.code} className="min-w-0">
                       <Cell c={c} view={view} onOpen={() => drill.open(company.slug, c.def.code)} />
-                    </td>
+                      <p className="mt-1 truncate text-center text-[11px] text-ink-muted" title={`${c.def.name} · weight ${Number(c.def.weight)}`}>
+                        {shortName(c.def)}
+                      </p>
+                    </div>
                   ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
-      {/* Phone and tablet: one block per business, the categories in a 3 × 3 grid. */}
+      {/* Phone and tablet: one block per business, its categories three to a row. */}
       <ul className="divide-y divide-mist-200 lg:hidden">
         {rows.map(({ company, s }) => (
           <li key={company.id} className="px-4 py-4">
@@ -470,7 +466,7 @@ function Matrix({ data, rows, range, view }: { data: BoardData; rows: Row[]; ran
               {s.categories.map((c) => (
                 <div key={c.def.code} className="min-w-0">
                   <Cell c={c} view={view} compact onOpen={() => drill.open(company.slug, c.def.code)} />
-                  <p className="mt-1 truncate text-center text-[11px] text-ink-muted">{SHORT[c.def.code] ?? c.def.name}</p>
+                  <p className="mt-1 truncate text-center text-[11px] text-ink-muted">{shortName(c.def)}</p>
                 </div>
               ))}
             </div>
@@ -481,29 +477,197 @@ function Matrix({ data, rows, range, view }: { data: BoardData; rows: Row[]; ran
   );
 }
 
-function Attention({ rows }: { rows: Row[] }) {
+/** Every measure below target, across the businesses, with what it costs its business's score. Biggest first. */
+function allDrags(rows: Row[]): (Drag & { company: Company })[] {
+  return rows
+    .flatMap(({ company, s }) => drags(s).map((d) => ({ ...d, company })))
+    .filter((d) => (d.measure.attainment ?? 1) < 0.95)
+    .sort((a, b) => b.lost - a.lost);
+}
+
+const and = (names: string[]) => (names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
+/**
+ * The board in sentences, for reading at a glance: the score and where it is
+ * heading, the one thing costing the most, what is fine, and what is missing.
+ */
+function InShort({
+  rows,
+  range,
+  group,
+  groupPrev,
+  vs,
+  missing,
+  total,
+  editable,
+}: {
+  rows: Row[];
+  range: Range;
+  group: number | null;
+  groupPrev: number | null;
+  vs: string;
+  missing: number;
+  total: number;
+  editable: boolean;
+}) {
   const drill = useDrill();
-  const items = rows
-    .flatMap(({ company, s }) =>
-      s.categories.flatMap((c) =>
-        c.measures
-          .filter((m) => m.attainment != null && m.attainment < 0.95)
-          .map((m) => ({ company, cat: c, m })),
+  const label = rangeLabel(range);
+  const reporting = rows.filter((r) => r.s.score != null);
+  const silent = rows.filter((r) => r.s.score == null);
+  const lines: { key: string; icon: React.ReactNode; tone: string; body: React.ReactNode; onClick?: () => void }[] = [];
+
+  if (group == null) {
+    lines.push({
+      key: "none",
+      icon: <Gauge />,
+      tone: "bg-mist-100 text-ink-muted",
+      body: <>Nothing has been recorded for {label} yet, so there is no score to show.</>,
+    });
+  } else {
+    const status = statusOf(group);
+    const words =
+      status === "on" ? "on target" : status === "watch" ? "close, but under the 95 that counts as on target" : "well under the 95 that counts as on target";
+    const diff = groupPrev == null ? null : group - groupPrev;
+    const moved = diff != null && Math.abs(diff) >= 0.05 ? `, ${diff > 0 ? "up" : "down"} ${Math.abs(diff).toFixed(1)} from ${vs}` : "";
+    const ranked = [...reporting].sort((a, b) => (b.s.score ?? 0) - (a.s.score ?? 0));
+    const first = ranked[0];
+    const last = ranked[ranked.length - 1];
+    lines.push({
+      key: "score",
+      icon: <Gauge />,
+      tone: { on: "bg-good-50 text-good", watch: "bg-watch-50 text-watch", off: "bg-off-50 text-off", none: "bg-mist-100 text-ink-muted" }[status],
+      body:
+        reporting.length === 1 ? (
+          <>
+            <b>{first.company.name}</b> scores <b>{group.toFixed(1)} of 100</b> for {label}: {words}
+            {moved}.
+          </>
+        ) : (
+          <>
+            The group scores <b>{group.toFixed(1)} of 100</b> for {label}: {words}
+            {moved}. {first.company.name} leads at {first.s.score?.toFixed(1)}; {last.company.name} is lowest at {last.s.score?.toFixed(1)}.
+          </>
+        ),
+      onClick: reporting.length === 1 ? () => drill.open(first.company.slug, "score") : undefined,
+    });
+
+    const worst = allDrags(rows)[0];
+    if (worst) {
+      lines.push({
+        key: "drag",
+        icon: <TrendingDown />,
+        tone: "bg-off-50 text-off",
+        body: (
+          <>
+            The biggest drag is <b>{worst.measure.def.name}</b> at {worst.company.name}: {valueVsTarget(worst.measure)}. On target, it would lift{" "}
+            {worst.company.name}'s score by about <b>{worst.lost.toFixed(1)} points</b>.
+          </>
+        ),
+        onClick: () => drill.open(worst.company.slug, worst.category.def.code),
+      });
+    }
+
+    const good = rows.flatMap(({ s }) => s.categories.flatMap((c) => c.measures.filter((m) => m.attainment != null && m.attainment >= 0.95)));
+    if (good.length) {
+      const names = [...new Set(good.map((m) => m.def.name))];
+      lines.push({
+        key: "good",
+        icon: <CheckCircle2 />,
+        tone: "bg-good-50 text-good",
+        body: (
+          <>
+            On target: {and(names.slice(0, 3))}
+            {names.length > 3 ? ` and ${names.length - 3} more` : ""}.
+          </>
+        ),
+      });
+    }
+  }
+
+  if (group != null && range.to === thisMonth()) {
+    lines.push({
+      key: "running",
+      icon: <Hourglass />,
+      tone: "bg-watch-50 text-watch",
+      body: (
+        <>
+          <b>{format(parseISO(range.to), "MMMM")} is still running.</b> Its sales and collections are month-to-date against a full month's target, so
+          they will keep rising until the month closes.
+        </>
       ),
-    )
-    .sort((a, b) => (a.m.attainment ?? 0) - (b.m.attainment ?? 0))
-    .slice(0, 8);
+    });
+  }
+
+  if (missing > 0) {
+    const partial = reporting.filter((r) => r.s.coverage < 99.5);
+    lines.push({
+      key: "gaps",
+      icon: <CircleDashed />,
+      tone: "bg-mist-100 text-ink-muted",
+      body: (
+        <>
+          {missing} of {total} measures have no figure yet.
+          {silent.length > 0 && group != null && ` ${and(silent.map((r) => r.company.name))} ${silent.length === 1 ? "has" : "have"} reported nothing.`}
+          {partial.map((r) => ` ${r.company.name}'s score rests on ${Math.round(r.s.coverage)}% of its scorecard, so read it as partial.`)}
+          {editable && (
+            <>
+              {" "}
+              <Link to={`/entry?m=${range.to.slice(0, 7)}`} className="font-medium text-brand-700 hover:underline">
+                Record results
+              </Link>
+            </>
+          )}
+        </>
+      ),
+    });
+  }
 
   return (
     <Card>
-      <CardHeader title="Needs attention" description="Measures below target, furthest off first." />
+      <CardHeader title="In short" description={`${label}, in plain words.`} />
+      <ul className="divide-y divide-mist-200">
+        {lines.map((l) => {
+          const inner = (
+            <>
+              <span className={cn("mt-0.5 grid size-7 shrink-0 place-items-center rounded-full [&_svg]:size-4", l.tone)}>{l.icon}</span>
+              <span className="min-w-0 flex-1 text-sm leading-relaxed text-ink-soft [&_b]:font-semibold [&_b]:text-ink">{l.body}</span>
+              {l.onClick && <ArrowRight className="mt-1.5 size-4 shrink-0 text-ink-muted" />}
+            </>
+          );
+          return (
+            <li key={l.key}>
+              {l.onClick ? (
+                <button type="button" onClick={l.onClick} className="flex w-full cursor-pointer items-start gap-3 px-5 py-3 text-left transition-colors hover:bg-mist-50">
+                  {inner}
+                </button>
+              ) : (
+                <div className="flex items-start gap-3 px-5 py-3">{inner}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
+function Attention({ rows }: { rows: Row[] }) {
+  const drill = useDrill();
+  const items = allDrags(rows).slice(0, 8);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Needs attention"
+        description="Measures below target, the one costing the score the most first. A miss in a heavy category costs more than the same miss in a light one."
+      />
       {items.length ? (
         <ul className="divide-y divide-mist-200">
-          {items.map(({ company, cat, m }) => (
+          {items.map(({ company, category, measure: m, lost }) => (
             <li key={`${company.id}:${m.def.code}`}>
               <button
                 type="button"
-                onClick={() => drill.open(company.slug, cat.def.code)}
+                onClick={() => drill.open(company.slug, category.def.code)}
                 className="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-mist-50"
               >
                 <span className="min-w-0 flex-1">
@@ -512,7 +676,10 @@ function Attention({ rows }: { rows: Row[] }) {
                     {company.name} · {valueVsTarget(m)}
                   </span>
                 </span>
-                <StatusBadge status={statusOf((m.attainment ?? 0) * 100)} label={`${Math.round((m.attainment ?? 0) * 100)}%`} />
+                <span className="shrink-0 text-right">
+                  <span className="block font-display text-[15px] text-off tabular-nums">−{lost.toFixed(1)} pts</span>
+                  <span className="block text-[11px] text-ink-muted tabular-nums">{Math.round((m.attainment ?? 0) * 100)}% of target</span>
+                </span>
               </button>
             </li>
           ))}
@@ -545,7 +712,7 @@ function Missing({ rows, range }: { rows: Row[]; range: Range }) {
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium text-ink">{company.name}</span>
                 <span className="block text-xs leading-relaxed text-ink-muted">
-                  {gaps.length ? gaps.map((c) => SHORT[c.def.code] ?? c.def.name).join(" · ") : "Everything is in."}
+                  {gaps.length ? gaps.map((c) => shortName(c.def)).join(" · ") : "Everything is in."}
                 </span>
               </span>
               {gaps.length > 0 && (

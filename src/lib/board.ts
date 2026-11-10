@@ -3,14 +3,18 @@ import { useQuery } from "@tanstack/react-query";
 import { differenceInCalendarMonths, format, parseISO, startOfMonth, subMonths, addMonths } from "date-fns";
 import { supabase } from "./supabase";
 import { viewToken } from "./view-link";
+import { compute, countsOf, FORMULAS } from "./formulas";
 import {
+  pickScorecard,
   scoreCompany,
   statusOf,
+  targetFor,
   type Actual,
   type CategoryDef,
   type CompanyMeasure,
   type CompanyScore,
   type MeasureDef,
+  type ScorecardDef,
 } from "./scoring";
 
 export interface Company {
@@ -21,9 +25,13 @@ export interface Company {
   description: string | null;
   data_source: string | null;
   sort: number;
+  /** The scorecard it is judged on (supabase/03_scorecards.sql). */
+  scorecard_code?: string | null;
 }
 
 export interface BoardData {
+  /** Empty on a database from before 03_scorecards.sql. */
+  scorecards: ScorecardDef[];
   companies: Company[];
   categories: CategoryDef[];
   measures: MeasureDef[];
@@ -48,7 +56,7 @@ async function fetchBoard(): Promise<BoardData> {
   if (DEV_SNAPSHOT) {
     const res = await fetch("/dev-snapshot.json");
     if (!res.ok) throw new Error("No dev snapshot. Run: npm run sync:nam -- --snapshot");
-    return (await res.json()) as BoardData;
+    return normalise((await res.json()) as BoardData);
   }
   // One call for everything. Members read as themselves; anyone else needs the
   // private view link's token (supabase/02_view_links.sql).
@@ -57,7 +65,11 @@ async function fetchBoard(): Promise<BoardData> {
     if (error.code === "42501") throw new PrivateBoardError(error.message);
     throw error;
   }
-  const raw = data as BoardData;
+  return normalise(data as BoardData);
+}
+
+/** Numbers come back from Postgres numerics as strings; the snapshot may predate scorecards. */
+function normalise(raw: BoardData): BoardData {
   const num = <T extends object>(rows: T[], keys: (keyof T)[]) =>
     rows.map((r) => {
       const o = { ...r };
@@ -65,12 +77,61 @@ async function fetchBoard(): Promise<BoardData> {
       return o;
     });
   return {
+    scorecards: raw.scorecards ?? [],
     companies: raw.companies,
-    categories: num(raw.categories, ["weight"]),
-    measures: num(raw.measures, ["default_target", "band"]),
-    companyMeasures: num(raw.companyMeasures, ["target"]),
+    categories: num(raw.categories, ["weight", "sort"]),
+    measures: num(raw.measures, ["default_target", "band", "sort"]),
+    companyMeasures: num(raw.companyMeasures, ["target"]).map((cm) => ({
+      ...cm,
+      quarter_targets: cm.quarter_targets ? cm.quarter_targets.map((t) => (t == null ? (null as unknown as number) : Number(t))) : null,
+    })),
     actuals: num(raw.actuals, ["actual", "target"]),
   };
+}
+
+/** The scorecard a business is judged on, with just its categories and measures. */
+export function scorecardFor(data: BoardData, companyId: string) {
+  const company = data.companies.find((c) => c.id === companyId);
+  const code = company?.scorecard_code ?? null;
+  const { categories, measures } = pickScorecard(code, data.categories, data.measures);
+  const scorecard = data.scorecards.find((s) => s.code === code) ?? null;
+  return { scorecard, categories, measures };
+}
+
+/** "2027 KPI scorecard", or a plain fallback before 03_scorecards.sql. */
+export function scorecardName(data: BoardData, companyId: string) {
+  return scorecardFor(data, companyId).scorecard?.name ?? "KPI scorecard";
+}
+
+/** Short label for a category on the board's grid. */
+export function shortName(c: CategoryDef) {
+  return c.short_name ?? LEGACY_SHORT[c.code] ?? c.name;
+}
+
+const LEGACY_SHORT: Record<string, string> = {
+  sales: "Sales",
+  finance: "Finance",
+  projects: "Projects",
+  procurement: "Procurement",
+  supply: "Delivery",
+  quality: "Quality",
+  hr: "People",
+  governance: "Governance",
+  customer: "Customers",
+};
+
+/**
+ * The money measure a business's page charts month by month: the first peso
+ * measure on its scorecard (sales for NAM Supply and Trading, revenue for ALM).
+ */
+export function headlineMeasure(data: BoardData, companyId: string): MeasureDef | null {
+  const { categories, measures } = scorecardFor(data, companyId);
+  const order = new Map(categories.map((c) => [c.code, c.sort]));
+  return (
+    [...measures]
+      .filter((m) => m.unit === "php" && m.direction === "higher")
+      .sort((a, b) => (order.get(a.category_code) ?? 0) - (order.get(b.category_code) ?? 0) || a.sort - b.sort)[0] ?? null
+  );
 }
 
 export function useBoard() {
@@ -106,9 +167,17 @@ export function dataSpan(data: BoardData | undefined) {
   return ps.length ? { first: ps[0], last: ps[ps.length - 1] } : null;
 }
 
-/** The month the board opens on: the newest month that has any result, else this month. */
+/**
+ * The month the board opens on: the newest finished month that has any result.
+ * The month still running is skipped while an earlier one exists, because ten
+ * days of sales against a whole month's target reads as a collapse.
+ */
 export function defaultPeriod(data: BoardData | undefined) {
-  return dataSpan(data)?.last ?? thisMonth();
+  const span = dataSpan(data);
+  if (!span) return thisMonth();
+  const now = thisMonth();
+  const finished = [...new Set(data?.actuals.map((a) => a.period) ?? [])].filter((p) => p < now).sort();
+  return finished.length ? finished[finished.length - 1] : span.last;
 }
 
 /** The last `n` months ending at `period`, oldest first. */
@@ -141,7 +210,7 @@ function aggregate(data: BoardData, companyId: string, months: string[]): Actual
     const def = data.measures.find((m) => m.code === code);
     if (!def) continue;
     const cm = data.companyMeasures.find((x) => x.company_id === companyId && x.measure_code === code);
-    const monthTarget = (r: Actual) => r.target ?? cm?.target ?? def.default_target;
+    const monthTarget = (r: Actual) => targetFor(def, cm, r);
     const sum = (f: (r: Actual) => number | null | undefined) => list.reduce((a, r) => a + Number(f(r) ?? 0), 0);
     const targets = list.map(monthTarget).filter((t): t is number => t != null);
 
@@ -158,8 +227,17 @@ function aggregate(data: BoardData, companyId: string, months: string[]): Actual
       actual = (Number(detail.income ?? 0) / Number(detail.sales)) * 100;
       target = targets.length ? targets.reduce((a, b) => a + b, 0) / targets.length : null;
     } else {
-      actual = sum((r) => r.actual) / list.length;
+      // Results typed in as counts (19 of 20) are worked out again from the counts added up,
+      // which is the true figure for the span; a plain average would let a quiet month count as much as a busy one.
+      const formula = FORMULAS[code];
+      const counted = formula && list.every((r) => countsOf(r.detail)) ? compute(formula.kind, Number(detail.num), Number(detail.den)) : null;
+      actual = counted ?? sum((r) => r.actual) / list.length;
       target = targets.length ? targets.reduce((a, b) => a + b, 0) / targets.length : null;
+    }
+    // Counts only explain the figure when every month has them.
+    if (!list.every((r) => countsOf(r.detail))) {
+      delete detail.num;
+      delete detail.den;
     }
     const last = list.reduce((a, b) => (b.updated_at > a.updated_at ? b : a));
     out.push({ ...last, period: months[0], actual, target, detail: { ...detail, months_reported: list.length } });
@@ -167,7 +245,7 @@ function aggregate(data: BoardData, companyId: string, months: string[]): Actual
   return out;
 }
 
-const SUMMABLE = ["sales_rows", "income", "sales", "amount_due", "collected", "lines_due", "quote_lines"];
+const SUMMABLE = ["sales_rows", "income", "sales", "amount_due", "collected", "lines_due", "quote_lines", "num", "den"];
 
 function mergeDetail(list: Actual[]) {
   const out: Record<string, unknown> = {};
@@ -196,11 +274,14 @@ function mergeDetail(list: Actual[]) {
 const asRange = (p: string | Range): Range => (typeof p === "string" ? { from: p, to: p } : p);
 
 export function companyScore(data: BoardData, companyId: string, period: string | Range): CompanyScore {
+  const { categories, measures } = scorecardFor(data, companyId);
+  const months = monthsIn(asRange(period));
   return scoreCompany({
-    categories: data.categories,
-    measures: data.measures,
+    categories,
+    measures,
     companyMeasures: data.companyMeasures.filter((c) => c.company_id === companyId),
-    actuals: aggregate(data, companyId, monthsIn(asRange(period))),
+    actuals: aggregate(data, companyId, months),
+    period: months[0],
   });
 }
 
@@ -247,7 +328,7 @@ export function measureSeries(data: BoardData, companyId: string, measureCode: s
       period: p,
       label: format(parseISO(p), "MMM"),
       value: row ? Number(row.actual) : null,
-      target: row?.target ?? cm?.target ?? def?.default_target ?? null,
+      target: def ? targetFor(def, cm, row ?? null, p) : null,
     };
   });
 }

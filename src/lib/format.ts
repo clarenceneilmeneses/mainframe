@@ -27,6 +27,8 @@ export function unitValue(v: number | null | undefined, unit: Unit, opts: { full
       return `${trim(v, 1)}×`;
     case "score5":
       return `${trim(v, 2)} / 5`;
+    case "count":
+      return trim(v, 1);
   }
 }
 

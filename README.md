@@ -1,7 +1,8 @@
 # NAM Mainframe
 
-KPI monitoring board for the NAM businesses — every business scored on the same 2027 KPI scorecard
-(nine categories, weights totalling 100), month by month.
+KPI monitoring board for the NAM businesses — each business scored month by month on its own
+scorecard (weights totalling 100 on each): NAM Builders on the nine-category 2027 scorecard,
+NAM Trading on its quarterly sales scorecard, ALM Management on its KPI performance scorecard.
 
 Built on the Malaya OBS design layer (via the Vivienda port), recoloured to the NAM blue.
 
@@ -30,6 +31,12 @@ Run `supabase/setup.sql` once in the Supabase SQL editor. It creates the tables,
 the 2027 scorecard, the three businesses and the first owner. Access is by the `members` table:
 owner (everything), editor (enter results), viewer (read only).
 
+Then, in order, once each (both safe to re-run):
+
+- `supabase/02_view_links.sql`: the private view-only link (`?k=<token>`).
+- `supabase/03_scorecards.sql`: one scorecard per business (the Trading and ALM scorecards,
+  ALM Management, targets by quarter, the `count` unit). Its header says what is still open.
+
 ## NAM Supply sync
 
 `npm run sync:nam -- --dump "<phpMyAdmin dump>.sql"` or `-- --live` works out NAM Supply's
@@ -38,6 +45,13 @@ sales vs target, gross margin, pipeline cover and collections per month and writ
 
 Local preview without a login: `npm run sync:nam -- --dump <file> --snapshot`, then
 `VITE_DEV_SNAPSHOT=1 npm run dev`. The snapshot file is gitignored; never commit real figures.
+
+## Recording results
+
+Most measures are one count out of another (19 milestones on time out of 20 due). Record results takes
+the two counts and works the figure out (`src/lib/formulas.ts`); the counts are saved with the result in
+`kpi_actuals.detail` as `num` / `den`, so a span of months is worked out from the counts added up. The
+page shows the score the typed figures would give before anything is saved.
 
 ## Scoring
 
