@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2, CircleDashed, CircleHelp, ClipboardPen, Gauge, Hourglass, TrendingDown } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CheckCircle2, CircleDashed, CircleHelp, ClipboardPen, FlaskConical, Gauge, Hourglass, TrendingDown } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import {
   companyScore,
@@ -26,6 +26,8 @@ import { useDrill } from "../components/Drilldown";
 import { HowItScoresSteps } from "../components/HowItScores";
 import { ScoreRing, Sparkbars } from "../components/viz";
 import { companyIcon } from "../components/Layout";
+import { AtAGlance } from "../components/AtAGlance";
+import { useSample } from "../lib/sample";
 
 const tint = {
   on: "bg-good-50 hover:ring-good/40",
@@ -38,7 +40,7 @@ const dot = { on: "bg-good", watch: "bg-watch", off: "bg-off", none: "bg-mist-30
 type View = "pct" | "points";
 
 /**
- * The KPI board. Top to bottom: the headline numbers, every business against
+ * The KPI board. Top to bottom: each business's top four numbers, the score tiles, every business against
  * every category in one grid (click a cell to drill in), then what needs
  * attention and what hasn't been reported.
  */
@@ -47,6 +49,7 @@ export default function Board() {
   const { role } = useAuth();
   const editable = DEV_SNAPSHOT || canEdit(role);
   const [howOpen, setHowOpen] = useState(false);
+  const [sample, setSample] = useSample();
 
   return (
     <>
@@ -59,7 +62,15 @@ export default function Board() {
             <Button variant="secondary" onClick={() => setHowOpen(true)}>
               <CircleHelp className="size-4" /> How it's scored
             </Button>
-            {editable && (
+            <Button
+              variant="secondary"
+              onClick={() => setSample(!sample)}
+              aria-pressed={sample}
+              title="Fill the whole board with made-up results, to see how it reads with every business reporting"
+            >
+              <FlaskConical className="size-4" /> {sample ? "Show real results" : "Show sample board"}
+            </Button>
+            {editable && !sample && (
               <Link
                 to={`/entry?m=${range.to.slice(0, 7)}`}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-medium text-mist-50 shadow-level-1 hover:bg-brand-700/90"
@@ -108,6 +119,9 @@ function Body({ data, range, editable }: { data: BoardData; range: Range; editab
 
   return (
     <div className="space-y-6">
+      <AtAGlance data={data} range={range} />
+
+      <h2 className="sr-only">Scores</h2>
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <button type="button" onClick={() => setList("group")} className={cn(tileBtn, "col-span-2 lg:col-span-1")}>
           <Card className="lift flex h-full items-center gap-4 p-5">

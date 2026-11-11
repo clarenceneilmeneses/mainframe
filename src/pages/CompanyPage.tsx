@@ -7,6 +7,9 @@ import {
   DEV_SNAPSHOT,
   headlineMeasure,
   lastSync,
+  monthsIn,
+  previousRange,
+  thisMonth,
   scorecardName,
   trendMonths,
   useBoard,
@@ -23,6 +26,8 @@ import { Card, CardHeader, EmptyState, PageHeader, StatTile, StatusBadge } from 
 import { BoardGate, rangeNoun, useRange } from "../components/board-bits";
 import { useDrill } from "../components/Drilldown";
 import { AmountVsTarget, AttainmentBar, ScoreRing, ScoreTrend, WeightVsEarned } from "../components/viz";
+import { BusinessCard } from "../components/AtAGlance";
+import { HEADLINES } from "../lib/sample";
 
 export default function CompanyPage() {
   const { slug } = useParams();
@@ -94,8 +99,28 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
     return { def, pts, target: targetFor(def, cm, null, range.to), any: pts.some((p) => p.value != null) };
   }, [data, company.id, range.from, range.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const glance = HEADLINES.find((b) => b.slug === company.slug);
+
   return (
     <div className="space-y-6">
+      {glance && (
+        <section aria-label="Top four" className="max-w-xl">
+          <p className="mb-2 flex items-center gap-2 text-xs text-ink-muted">
+            Top four
+            <span className="rounded-full bg-watch-50 px-2 py-0.5 text-[11px] font-medium text-watch ring-1 ring-watch/30 ring-inset">Sample figures</span>
+          </p>
+          <BusinessCard
+            b={glance}
+            data={data}
+            range={range}
+            months={monthsIn(range)}
+            before={monthsIn(previousRange(range))}
+            vs={rangeNoun(range).startsWith("these") ? "the period before" : "last month"}
+            running={range.to === thisMonth()}
+            linked={false}
+          />
+        </section>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <button
           type="button"

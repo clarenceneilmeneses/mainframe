@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { differenceInCalendarMonths, format, parseISO, startOfMonth, subMonths, addMonths } from "date-fns";
 import { supabase } from "./supabase";
 import { viewToken } from "./view-link";
+import { useSample, withSample } from "./sample";
 import { compute, countsOf, FORMULAS } from "./formulas";
 import {
   pickScorecard,
@@ -134,8 +135,16 @@ export function headlineMeasure(data: BoardData, companyId: string): MeasureDef 
   );
 }
 
+/** The board as everyone sees it; with sample mode on, the real results are swapped for sample ones (src/lib/sample.ts). */
 export function useBoard() {
-  return useQuery({ queryKey: BOARD_KEY, queryFn: fetchBoard, staleTime: 60_000, retry: (n, e) => !(e instanceof PrivateBoardError) && n < 1 });
+  const [sample] = useSample();
+  return useQuery({
+    queryKey: BOARD_KEY,
+    queryFn: fetchBoard,
+    staleTime: 60_000,
+    retry: (n, e) => !(e instanceof PrivateBoardError) && n < 1,
+    select: sample ? withSample : undefined,
+  });
 }
 
 // ---------------------------------------------------------------------------

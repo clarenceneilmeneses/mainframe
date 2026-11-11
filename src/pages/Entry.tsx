@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { KeyRound, Lock, RefreshCw } from "lucide-react";
+import { FlaskConical, KeyRound, Lock, RefreshCw } from "lucide-react";
+import { sampleOn, useSample } from "../lib/sample";
 import { BOARD_KEY, DEV_SNAPSHOT, defaultPeriod, scorecardFor, useBoard, type BoardData, type Company } from "../lib/board";
 import { scoreCompany, statusOf, targetFor, type Actual, type MeasureDef, type MeasureResult } from "../lib/scoring";
 import { compute, countsOf, FORMULAS, JOINER } from "../lib/formulas";
@@ -55,6 +56,7 @@ export default function Entry() {
   const company = data?.companies.find((c) => c.slug === slug) ?? data?.companies[0];
   const { role } = useAuth();
   const editable = DEV_SNAPSHOT || canEdit(role);
+  const [sample, setSample] = useSample();
 
   return (
     <>
@@ -69,7 +71,23 @@ export default function Entry() {
         }
         actions={<MonthSelect value={period} onChange={(p) => setParam("m", p.slice(0, 7))} />}
       />
-      {!DEV_SNAPSHOT && !session ? (
+      {sample ? (
+        <EmptyState
+          icon={<FlaskConical />}
+          title="The sample board is on"
+          action={
+            <button
+              type="button"
+              onClick={() => setSample(false)}
+              className="inline-flex h-10 cursor-pointer items-center rounded-xl bg-brand-700 px-4 text-sm font-medium text-mist-50 shadow-level-1 hover:bg-brand-700/90"
+            >
+              Show real results
+            </button>
+          }
+        >
+          The figures on screen are made up. Switch back to real results to record this month's.
+        </EmptyState>
+      ) : !DEV_SNAPSHOT && !session ? (
         <EmptyState
           icon={<KeyRound />}
           title="Sign in to record results"
@@ -198,6 +216,7 @@ function EntryForm({ data, company, period, editable }: { data: BoardData; compa
   const save = useMutation({
     mutationFn: async () => {
       if (DEV_SNAPSHOT) throw new Error("Saving is off in the local preview.");
+      if (sampleOn()) throw new Error("The sample board is on. Switch back to real results on the board first.");
       const upserts = [];
       const deletes: string[] = [];
       for (const m of changed) {

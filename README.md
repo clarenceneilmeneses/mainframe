@@ -53,6 +53,16 @@ the two counts and works the figure out (`src/lib/formulas.ts`); the counts are 
 `kpi_actuals.detail` as `num` / `den`, so a span of months is worked out from the counts added up. The
 page shows the score the typed figures would give before anything is saved.
 
+## At a glance and the sample board
+
+The board opens with each business's top four numbers (`src/lib/sample.ts`, `HEADLINES`). They are
+**sample figures** until each business sends its own four; the badge says so. Swap the entries in
+`HEADLINES` for the real figures once they are agreed.
+
+**Show sample board** (or a link with `?sample=1`) fills every scorecard with made-up results, so the
+board can be seen full. It is per device, flagged in the top bar, and recording results is off while
+it is on. `?sample=0` or the pill's × turns it off.
+
 ## Scoring
 
 `src/lib/scoring.ts` — measure attainment capped at 100%, category = average of its measures × weight,

@@ -21,6 +21,7 @@ import { useAuth } from "../lib/auth";
 import { DEV_SNAPSHOT, useBoard, type Company } from "../lib/board";
 import { cn } from "../lib/utils";
 import { PeriodPicker, useWithPeriod } from "./board-bits";
+import { useSample } from "../lib/sample";
 import { Drilldown } from "./Drilldown";
 
 /**
@@ -217,6 +218,7 @@ export default function Layout() {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  const [sample, setSample] = useSample();
   const nav = useNav();
   const withPeriod = useWithPeriod();
 
@@ -315,7 +317,17 @@ export default function Layout() {
                   )}
                 </ol>
               </nav>
-              {DEV_SNAPSHOT && (
+              {sample && (
+                <button
+                  type="button"
+                  onClick={() => setSample(false)}
+                  title="These are made-up results. Tap to go back to the real ones."
+                  className="cursor-pointer rounded-full bg-watch-50 px-2.5 py-1 text-[11px] font-medium whitespace-nowrap text-watch ring-1 ring-watch/30 ring-inset hover:bg-watch/15"
+                >
+                  Sample board <span aria-hidden>×</span>
+                </button>
+              )}
+              {DEV_SNAPSHOT && !sample && (
                 <span className="rounded-full bg-watch-50 px-2.5 py-1 text-[11px] font-medium text-watch ring-1 ring-watch/30 ring-inset">
                   Local preview data
                 </span>
