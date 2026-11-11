@@ -55,13 +55,17 @@ page shows the score the typed figures would give before anything is saved.
 
 ## At a glance and the sample board
 
-The board opens with each business's top four numbers (`src/lib/sample.ts`, `HEADLINES`). They are
-**sample figures** until each business sends its own four; the badge says so. Swap the entries in
-`HEADLINES` for the real figures once they are agreed.
+The board opens with each business's top four numbers (`src/lib/sample.ts`, `HEADLINES`). Tap one
+for its detail panel (`?f=<business>~<figure>`): a year against the year before, the year so far,
+best and slowest months, its breakdowns and the last six months. Each business's page leads with the
+same four and a month-by-month chart. They are **sample figures** until each business sends its own
+four; the badge says so. Swap the entries in `HEADLINES` for the real figures once they are agreed.
 
-**Show sample board** (or a link with `?sample=1`) fills every scorecard with made-up results, so the
-board can be seen full. It is per device, flagged in the top bar, and recording results is off while
-it is on. `?sample=0` or the pill's × turns it off.
+**The sample board** fills every scorecard with made-up results, breakdowns and counts, so every page
+and drill-down has something in it. It is **on by default** for now (`SAMPLE_DEFAULT` in
+`src/lib/sample.ts`; set it to `false` once the businesses report). It is flagged in the top bar and
+recording results is off while it is on. The pill's ×, **Show real results** or `?sample=0` turns it
+off on that device; `?sample=1` turns it back on.
 
 ## Scoring
 

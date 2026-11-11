@@ -23,6 +23,7 @@ import { cn } from "../lib/utils";
 import { PeriodPicker, useWithPeriod } from "./board-bits";
 import { useSample } from "../lib/sample";
 import { Drilldown } from "./Drilldown";
+import { FigureDetail } from "./FigureDetail";
 
 /**
  * The frame, after Malaya OBS: a floating white sidebar with foldable groups,
@@ -357,6 +358,7 @@ export default function Layout() {
       </div>
 
       <Drilldown />
+      <FigureDetail />
 
       {/* Phone nav pill: the three places you go most, and More for the rest. */}
       <div className="fixed inset-x-0 bottom-0 z-40 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden">

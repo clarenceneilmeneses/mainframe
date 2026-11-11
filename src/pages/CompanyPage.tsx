@@ -7,9 +7,6 @@ import {
   DEV_SNAPSHOT,
   headlineMeasure,
   lastSync,
-  monthsIn,
-  previousRange,
-  thisMonth,
   scorecardName,
   trendMonths,
   useBoard,
@@ -26,8 +23,8 @@ import { Card, CardHeader, EmptyState, PageHeader, StatTile, StatusBadge } from 
 import { BoardGate, rangeNoun, useRange } from "../components/board-bits";
 import { useDrill } from "../components/Drilldown";
 import { AmountVsTarget, AttainmentBar, ScoreRing, ScoreTrend, WeightVsEarned } from "../components/viz";
-import { BusinessCard } from "../components/AtAGlance";
-import { HEADLINES } from "../lib/sample";
+import { BusinessOverview } from "../components/AtAGlance";
+import { HEADLINES, useSample } from "../lib/sample";
 
 export default function CompanyPage() {
   const { slug } = useParams();
@@ -36,6 +33,7 @@ export default function CompanyPage() {
   const company = data?.companies.find((c) => c.slug === slug);
   const { role } = useAuth();
   const editable = DEV_SNAPSHOT || canEdit(role);
+  const [sample] = useSample();
 
   return (
     <>
@@ -45,7 +43,7 @@ export default function CompanyPage() {
         description={`${label}${company?.description ? ` · ${company.description}` : ""}`}
         actions={
           <>
-            {editable && company && (
+            {editable && company && !sample && (
               <Link
                 to={`/entry?c=${company.slug}&m=${range.to.slice(0, 7)}`}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-medium text-mist-50 shadow-level-1 hover:bg-brand-700/90"
@@ -103,24 +101,7 @@ function Body({ data, company, range }: { data: BoardData; company: Company; ran
 
   return (
     <div className="space-y-6">
-      {glance && (
-        <section aria-label="Top four" className="max-w-xl">
-          <p className="mb-2 flex items-center gap-2 text-xs text-ink-muted">
-            Top four
-            <span className="rounded-full bg-watch-50 px-2 py-0.5 text-[11px] font-medium text-watch ring-1 ring-watch/30 ring-inset">Sample figures</span>
-          </p>
-          <BusinessCard
-            b={glance}
-            data={data}
-            range={range}
-            months={monthsIn(range)}
-            before={monthsIn(previousRange(range))}
-            vs={rangeNoun(range).startsWith("these") ? "the period before" : "last month"}
-            running={range.to === thisMonth()}
-            linked={false}
-          />
-        </section>
-      )}
+      {glance && <BusinessOverview b={glance} data={data} range={range} />}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <button
           type="button"

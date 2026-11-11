@@ -1,17 +1,22 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { format, parseISO, subYears } from "date-fns";
 import { ChevronRight } from "lucide-react";
 import { monthsEnding, monthsIn, previousRange, thisMonth, type BoardData, type Range } from "../lib/board";
-import { HEADLINES, headlineMonth, headlineValue, type BusinessHeadlines, type HeadlineDef } from "../lib/sample";
+import { HEADLINES, headlineBreakdowns, headlineMonth, headlineValue, type BusinessHeadlines, type HeadlineDef } from "../lib/sample";
 import { unitValue } from "../lib/format";
 import { cn } from "../lib/utils";
-import { Card } from "./ui";
-import { rangeLabel, rangeNoun, useWithPeriod } from "./board-bits";
+import { Card, Tabs } from "./ui";
+import { BreakdownBars, ThisYearVsLast } from "./viz";
+import { rangeLabel, rangeNoun, useRange, useWithPeriod } from "./board-bits";
 import { companyIcon } from "./Layout";
+import { useFigure } from "./FigureDetail";
 
 /*
  * "At a glance": each business's top four numbers, for reading on a phone.
- * The figures are samples until each business sends its own four
- * (src/lib/sample.ts); the badge says so.
+ * Tap a number for its charts and breakdowns (FigureDetail). The figures are
+ * samples until each business sends its own four (src/lib/sample.ts); the
+ * badge says so.
  */
 
 const SEGMENT = ["bg-brand-800", "bg-brand-600", "bg-brand-300", "bg-brand-200"];
@@ -43,7 +48,7 @@ export function AtAGlance({ data, range }: { data: BoardData; range: Range }) {
         </span>
         <p className="w-full text-xs text-ink-muted">
           Each business's top four for {rangeLabel(range)}
-          {running ? " (month to date)" : ""}, against {vs}.
+          {running ? " (month to date)" : ""}, against {vs}. Tap a number for its charts and breakdowns.
         </p>
       </div>
 
@@ -122,11 +127,11 @@ export function BusinessCard({
       ) : (
         <div className="flex items-center gap-2.5 px-4 py-3">{head}</div>
       )}
-      <dl className="grid grid-cols-2 gap-px border-t border-mist-200 bg-mist-200">
+      <div className="grid grid-cols-2 gap-px border-t border-mist-200 bg-mist-200">
         {b.figures.map((f) => (
           <Figure key={f.code} slug={b.slug} def={f} range={range} months={months} before={before} vs={vs} running={running} />
         ))}
-      </dl>
+      </div>
     </Card>
   );
 }
@@ -151,17 +156,23 @@ function Figure({
   const now = headlineValue(slug, def, months);
   const prev = headlineValue(slug, def, before);
   const trend = monthsEnding(range.to, 12).map((p) => headlineMonth(slug, def, p));
+  const fig = useFigure();
   // A month still running has only part of its amounts in; comparing them with a whole month reads as a fall.
   const comparable = !(running && def.agg === "sum");
   return (
-    <div className="min-w-0 bg-white px-3.5 py-3 sm:px-4">
-      <dt className="truncate text-[11px] font-semibold tracking-[0.08em] text-ink-muted uppercase">{def.label}</dt>
-      <dd className="mt-1.5 font-display text-[22px] leading-none text-ink tabular-nums">{unitValue(now, def.unit)}</dd>
-      <dd className="mt-2 flex items-end justify-between gap-2">
+    <button
+      type="button"
+      onClick={() => fig.open(slug, def.code)}
+      title={`${def.label}: charts and breakdowns`}
+      className="group block min-w-0 cursor-pointer bg-white px-3.5 py-3 text-left transition-colors hover:bg-brand-50/50 focus-visible:relative focus-visible:outline-2 focus-visible:outline-brand-700 active:bg-brand-50 sm:px-4"
+    >
+      <span className="block truncate text-[11px] font-semibold tracking-[0.08em] text-ink-muted uppercase">{def.label}</span>
+      <span className="mt-1.5 block font-display text-[22px] leading-none text-ink tabular-nums">{unitValue(now, def.unit)}</span>
+      <span className="mt-2 flex items-end justify-between gap-2">
         {comparable ? <Change def={def} now={now} before={prev} vs={vs} compact /> : <span className="text-[11px] text-ink-muted">so far</span>}
         <MiniBars values={trend} />
-      </dd>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -213,5 +224,78 @@ function MiniBars({ values }: { values: (number | null)[] }) {
         />
       ))}
     </span>
+  );
+}
+
+/**
+ * A business's page, top: its four numbers beside one of them month by month
+ * (pick which) and what that one is made of.
+ */
+export function BusinessOverview({ b, data, range }: { b: BusinessHeadlines; data: BoardData; range: Range }) {
+  const [code, setCode] = useState(b.figures[0].code);
+  const { setRange } = useRange();
+  const fig = useFigure();
+  const def = b.figures.find((f) => f.code === code) ?? b.figures[0];
+  const months = monthsIn(range);
+  const series = monthsEnding(range.to, 12).map((p) => ({
+    period: p,
+    label: format(parseISO(p), "MMM"),
+    value: headlineMonth(b.slug, def, p),
+    last: headlineMonth(b.slug, def, format(subYears(parseISO(p), 1), "yyyy-MM-dd")),
+  }));
+  const split = headlineBreakdowns(b, def, months)[0];
+
+  return (
+    <section aria-labelledby="overview-title" className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 id="overview-title" className="font-display text-lg font-medium text-ink">
+          Top four
+        </h2>
+        <span className="rounded-full bg-watch-50 px-2.5 py-0.5 text-[11px] font-medium text-watch ring-1 ring-watch/30 ring-inset">Sample figures</span>
+        <p className="w-full text-xs text-ink-muted">Tap a number for everything behind it.</p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <BusinessCard
+          b={b}
+          data={data}
+          range={range}
+          months={months}
+          before={monthsIn(previousRange(range))}
+          vs={rangeNoun(range).startsWith("these") ? "the period before" : "last month"}
+          running={range.to === thisMonth()}
+          linked={false}
+        />
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-mist-200 px-4 py-3">
+            <h3 className="font-display text-base font-medium text-ink">Month by month</h3>
+            <Tabs value={def.code} onChange={setCode} items={b.figures.map((f) => ({ value: f.code, label: f.label }))} />
+          </div>
+          <div className="px-2 pt-3">
+            <ThisYearVsLast data={series} unit={def.unit} name={def.label} onPick={(p) => setRange({ from: p, to: p })} height={200} />
+          </div>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-3 text-xs text-ink-muted">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="size-2.5 rounded-sm bg-brand-700" /> Last 12 months
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-0.5 w-4 border-t-2 border-dashed border-brand-300" /> A year earlier
+            </span>
+          </p>
+          {split && (
+            <div className="border-t border-mist-200 px-4 py-4">
+              <div className="mb-3 flex items-baseline justify-between gap-3">
+                <h4 className="text-sm font-medium text-ink">
+                  {def.label}, {split.title.toLowerCase()}
+                </h4>
+                <button type="button" onClick={() => fig.open(b.slug, def.code)} className="shrink-0 cursor-pointer text-sm font-medium text-brand-700 hover:underline">
+                  More
+                </button>
+              </div>
+              <BreakdownBars rows={split.rows} unit={split.unit} />
+            </div>
+          )}
+        </Card>
+      </div>
+    </section>
   );
 }

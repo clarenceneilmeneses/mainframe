@@ -319,7 +319,10 @@ export function BreakdownBars({ rows, unit }: { rows: { label: string; value: nu
       {rows.map((r) => (
         <li key={r.label} title={`${r.label}: ${unitValue(r.value, unit, { full: true })}`}>
           <div className="mb-1 flex justify-between gap-3 text-[13px]">
-            <span className="min-w-0 truncate text-ink-soft capitalize">{r.label.toLowerCase()}</span>
+            {/* Synced labels come in capitals; tidy those, leave typed ones as written. */}
+            <span className={cn("min-w-0 truncate text-ink-soft", r.label === r.label.toUpperCase() && "capitalize")}>
+              {r.label === r.label.toUpperCase() ? r.label.toLowerCase() : r.label}
+            </span>
             <span className="shrink-0 tabular-nums text-ink">
               {unitValue(r.value, unit)}
               {total > 0 && <span className="ml-1.5 text-xs text-ink-muted">{Math.round((r.value / total) * 100)}%</span>}
@@ -392,6 +395,65 @@ export function WeightVsEarned({
           {reportedWeight < 100 && <span className="block text-right text-xs text-ink-muted">{reportedWeight} of the 100 have a figure</span>}
         </span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A figure month by month: bars for the twelve months in view, a soft line
+ * for the same months a year earlier. The last bar is the month in view.
+ */
+export function ThisYearVsLast({
+  data,
+  unit,
+  name,
+  onPick,
+  height = 224,
+}: {
+  data: { period: string; label: string; value: number | null; last: number | null }[];
+  unit: Unit;
+  name: string;
+  onPick?: (period: string) => void;
+  height?: number;
+}) {
+  const fmt = axisFor(unit);
+  const vals = data.flatMap((d) => [d.value, d.last]).filter((v): v is number => v != null);
+  const lo = unit === "pct" ? Math.max(0, Math.floor(Math.min(...vals) - 3)) : 0;
+  return (
+    <div style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="28%">
+          <CartesianGrid vertical={false} stroke="#e8eaee" />
+          <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={{ stroke: "#d9dce2" }} interval="preserveStartEnd" />
+          <YAxis tick={axis} tickLine={false} axisLine={false} width={unit === "php" ? 56 : 40} domain={[lo, "auto"]} tickFormatter={fmt} />
+          <Tooltip
+            cursor={{ fill: "rgba(29,91,164,0.06)" }}
+            content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null;
+              const p = (payload[0] as TipPayload).payload as { value: number | null; last: number | null };
+              const rows: [string, string][] = [[name, unitValue(p.value, unit, { full: true })]];
+              if (p.last != null) rows.push(["A year earlier", unitValue(p.last, unit, { full: true })]);
+              if (p.last != null && p.value != null && p.last !== 0) {
+                const d = unit === "pct" ? p.value - p.last : ((p.value - p.last) / p.last) * 100;
+                rows.push(["Change", `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(unit === "pct" ? 1 : 0)}${unit === "pct" ? " pts" : "%"}`]);
+              }
+              return <TipBox title={String(label)} rows={rows} />;
+            }}
+          />
+          <Bar
+            dataKey="value"
+            fill={BLUE}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={32}
+            isAnimationActive={false}
+            cursor={onPick ? "pointer" : undefined}
+            onClick={(d: { payload?: { period?: string } }) => {
+              if (onPick && d?.payload?.period) onPick(d.payload.period);
+            }}
+          />
+          <Line dataKey="last" stroke={BLUE_SOFT} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} connectNulls />
+        </ComposedChart>
+      </ResponsiveContainer>
     </div>
   );
 }
