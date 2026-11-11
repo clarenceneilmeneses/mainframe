@@ -6,6 +6,7 @@ import Entry from "./pages/Entry";
 import Scorecard from "./pages/Scorecard";
 import Guide from "./pages/Guide";
 import Login from "./pages/Login";
+import { FigurePage, KpiPage } from "./pages/Detail";
 
 export default function App() {
   return (
@@ -14,6 +15,8 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<Board />} />
         <Route path="c/:slug" element={<CompanyPage />} />
+        <Route path="c/:slug/top/:code" element={<FigurePage />} />
+        <Route path="c/:slug/kpi/:category" element={<KpiPage />} />
         <Route path="entry" element={<Entry />} />
         <Route path="scorecard" element={<Scorecard />} />
         <Route path="guide" element={<Guide />} />

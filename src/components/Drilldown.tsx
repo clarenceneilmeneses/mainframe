@@ -1,75 +1,50 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, ClipboardPen, RefreshCw } from "lucide-react";
-import { companyScore, DEV_SNAPSHOT, measureSeries, previousRange, scorecardFor, useBoard, type BoardData, type Range } from "../lib/board";
+import { companyScore, DEV_SNAPSHOT, measureSeries, previousRange, type BoardData, type Range } from "../lib/board";
 import { statusOf, type MeasureResult } from "../lib/scoring";
 import { money, unitValue } from "../lib/format";
 import { countsOf, FORMULAS } from "../lib/formulas";
 import { canEdit, useAuth } from "../lib/auth";
-import { Sheet, StatusBadge } from "./ui";
-import { rangeLabel, rangeNoun, useRange } from "./board-bits";
+import { StatusBadge } from "./ui";
+import { cn } from "../lib/utils";
+import { rangeNoun, useRange, useWithPeriod } from "./board-bits";
 import { AttainmentBar, BreakdownBars, MeasureTrend, ScoreRing, WeightVsEarned } from "./viz";
 
 /**
- * The drill-down: click any category anywhere and this panel opens with what
+ * The drill-down: click any category anywhere and its page opens with what
  * sits underneath it — each measure, a year of history against the target,
- * and for synced figures the breakdown the number was built from.
- * Lives in the URL (?d=nam-supply~sales), so a drill-down can be shared.
+ * and the breakdown the number was built from. A page of its own
+ * (/c/nam-supply/kpi/sales, or /kpi/score for the score itself) so it fills
+ * the screen and can be shared.
  */
 export function useDrill() {
-  const [params, setParams] = useSearchParams();
-  const raw = params.get("d");
-  const [slug, category] = raw?.split("~") ?? [];
-  const set = (v: string | null) =>
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (v) next.set("d", v);
-        else next.delete("d");
-        return next;
-      },
-      { replace: false },
-    );
+  const navigate = useNavigate();
+  const withPeriod = useWithPeriod();
   return {
-    slug: slug ?? null,
-    category: category ?? null,
-    open: (s: string, c: string) => set(`${s}~${c}`),
-    close: () => set(null),
+    open: (slug: string, category: string) => navigate(withPeriod(`/c/${slug}/kpi/${category}`)),
   };
 }
 
-export function Drilldown() {
-  const { data } = useBoard();
-  const drill = useDrill();
-  const { range } = useRange();
-  const company = data?.companies.find((c) => c.slug === drill.slug);
-  // Only a category on this business's own scorecard; a link to another one opens nothing.
-  const cat = data && company ? scorecardFor(data, company.id).categories.find((c) => c.code === drill.category) : undefined;
-  // "~score" opens the business's score itself: where its points came from.
-  const scoreView = drill.category === "score";
-  const open = Boolean(data && company && (cat || scoreView));
-
-  return (
-    <Sheet
-      open={open}
-      onClose={drill.close}
-      title={
-        company && (cat || scoreView) ? (
-          <div className="min-w-0">
-            <p className="eyebrow truncate">
-              {company.name} · {rangeLabel(range)}
-            </p>
-            <p className="truncate font-display text-lg font-medium text-ink">{scoreView ? "Where the score comes from" : cat!.name}</p>
-          </div>
-        ) : null
-      }
-    >
-      {open && data && company && scoreView && (
-        <ScoreBody data={data} companyId={company.id} slug={company.slug} range={range} onOpen={(c) => drill.open(company.slug, c)} />
-      )}
-      {open && data && company && cat && <Body data={data} companyId={company.id} slug={company.slug} categoryCode={cat.code} range={range} />}
-    </Sheet>
-  );
+/** Old shared links (?d=slug~category, ?f=slug~figure) open the pages they now point to. */
+export function LegacyDetailLinks() {
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const d = params.get("d");
+  const f = params.get("f");
+  useEffect(() => {
+    const [slug, code] = (d ?? f)?.split("~") ?? [];
+    if (!slug || !code) return;
+    const keep = new URLSearchParams(params);
+    keep.delete("d");
+    keep.delete("f");
+    const q = keep.toString();
+    navigate(`/c/${slug}/${d ? "kpi" : "top"}/${code}${q ? `?${q}` : ""}`, { replace: true });
+  }, [d, f]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
 }
+
+export { Body as CategoryView, ScoreBody as ScoreView };
 
 function Body({ data, companyId, slug, categoryCode, range }: { data: BoardData; companyId: string; slug: string; categoryCode: string; range: Range }) {
   const s = companyScore(data, companyId, range);
@@ -80,8 +55,8 @@ function Body({ data, companyId, slug, categoryCode, range }: { data: BoardData;
   const m = range.to.slice(0, 7);
 
   return (
-    <div className="space-y-4 p-4 sm:p-5">
-      <div className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1">
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="eyebrow">Category score</p>
@@ -98,9 +73,11 @@ function Body({ data, companyId, slug, categoryCode, range }: { data: BoardData;
         </p>
       </div>
 
-      {c.measures.map((mr) => (
-        <MeasureBlock key={mr.def.code} data={data} companyId={companyId} mr={mr} range={range} recordHref={editable ? `/entry?c=${slug}&m=${m}` : null} />
-      ))}
+      <div className={cn("grid grid-cols-1 items-start gap-4", c.measures.length > 1 && "lg:grid-cols-2")}>
+        {c.measures.map((mr) => (
+          <MeasureBlock key={mr.def.code} data={data} companyId={companyId} mr={mr} range={range} recordHref={editable ? `/entry?c=${slug}&m=${m}` : null} />
+        ))}
+      </div>
 
       <Link to={`/c/${slug}?from=${range.from.slice(0, 7)}&to=${m}`} className="flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-brand-700 hover:underline">
         Open the full scorecard <ArrowRight className="size-4" />
@@ -178,7 +155,7 @@ function MeasureBlock({
   }
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-mist-200 bg-white shadow-level-1">
+    <section className="@container overflow-hidden rounded-2xl border border-mist-200 bg-white shadow-level-1">
       <header className="flex items-start justify-between gap-3 px-4 pt-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-ink">
@@ -221,12 +198,16 @@ function MeasureBlock({
         </div>
       )}
 
-      {breakdowns.map((b) => (
-        <div key={b.title} className="border-t border-mist-200 px-4 py-3.5">
-          <p className="mb-2.5 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">{b.title}</p>
-          <BreakdownBars rows={b.rows} unit={b.unit} />
+      {breakdowns.length > 0 && (
+        <div className="grid grid-cols-1 border-t border-mist-200 @3xl:grid-cols-2">
+          {breakdowns.map((b, i) => (
+            <div key={b.title} className={cn("px-4 py-3.5", i > 0 && "border-t border-mist-200 @3xl:border-t-0 @3xl:border-l")}>
+              <p className="mb-2.5 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">{b.title}</p>
+              <BreakdownBars rows={b.rows} unit={b.unit} />
+            </div>
+          ))}
         </div>
-      ))}
+      )}
       {!breakdowns.length && <div className="h-4" />}
     </section>
   );
@@ -259,8 +240,8 @@ function ScoreBody({
     .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
 
   return (
-    <div className="space-y-4 p-4 sm:p-5">
-      <div className="flex items-center gap-4 rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1">
+    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="flex items-center gap-4 rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1 sm:p-5 lg:col-start-1">
         <ScoreRing score={s.score} status={s.status} size={88} stroke={8} />
         <div className="min-w-0 text-sm text-ink-muted">
           <StatusBadge status={s.status} />
@@ -272,7 +253,7 @@ function ScoreBody({
         </div>
       </div>
 
-      <section className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1">
+      <section className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1 sm:p-5 lg:col-start-2 lg:row-span-3 lg:row-start-1">
         <p className="mb-3 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">Weight vs earned · click one to open it</p>
         <WeightVsEarned
           onPick={onOpen}
@@ -288,7 +269,7 @@ function ScoreBody({
       </section>
 
       {moves.length > 0 && (
-        <section className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1">
+        <section className="rounded-2xl border border-mist-200 bg-white p-4 shadow-level-1 sm:p-5 lg:col-start-1">
           <p className="mb-2 text-[11px] font-semibold tracking-[0.12em] text-ink-muted uppercase">What moved since the period before</p>
           <ul className="divide-y divide-mist-100">
             {moves.map(({ c, diff }) => (
@@ -311,7 +292,7 @@ function ScoreBody({
 
       <Link
         to={`/c/${slug}?from=${range.from.slice(0, 7)}&to=${range.to.slice(0, 7)}`}
-        className="flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-brand-700 hover:underline"
+        className="flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-brand-700 hover:underline lg:col-start-1"
       >
         Open the full scorecard <ArrowRight className="size-4" />
       </Link>
